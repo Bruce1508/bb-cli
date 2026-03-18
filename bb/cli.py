@@ -14,7 +14,8 @@ console = Console()
 @app.command()
 def version() -> None:
     """Print the bb-cli version."""
-    console.print("bb-cli 0.1.0")
+    from bb import __version__
+    console.print(f"bb-cli {__version__}")
 
 # (internal_value, display_label)
 _LMS_OPTIONS: dict[int, tuple[str, str]] = {
