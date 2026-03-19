@@ -1,0 +1,53 @@
+BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Blackboard//Blackboard Learn//EN
+X-WR-CALNAME:My Courses
+X-WR-TIMEZONE:America/Toronto
+
+BEGIN:VEVENT
+UID:ical-bti325-lab5@learn.senecapolytechnic.ca
+DTSTART;TZID=America/Toronto:20260325T235900
+DTEND;TZID=America/Toronto:20260325T235900
+SUMMARY:BTI325 - Web Programming - Lab 5
+DESCRIPTION:Lab 5 submission due
+END:VEVENT
+
+BEGIN:VEVENT
+UID:ical-oop244-workshop7@learn.senecapolytechnic.ca
+DTSTART;VALUE=DATE:20260328
+DTEND;VALUE=DATE:20260328
+SUMMARY:OOP244 - OOP - Workshop 7
+DESCRIPTION:Workshop 7 date-only event
+END:VEVENT
+
+BEGIN:VEVENT
+UID:ical-btp200-assignment@learn.senecapolytechnic.ca
+DTSTART;TZID=America/Toronto:20260401T235900
+DTEND;TZID=America/Toronto:20260401T235900
+SUMMARY:BTP200 - Internet Technologies - Assignment 2
+DESCRIPTION:Assignment 2 submission
+END:VEVENT
+
+BEGIN:VEVENT
+UID:ical-no-separator@learn.senecapolytechnic.ca
+DTSTART;TZID=America/Toronto:20260410T120000
+DTEND;TZID=America/Toronto:20260410T120000
+SUMMARY:Final Exam Period
+DESCRIPTION:No course separator in summary
+END:VEVENT
+
+BEGIN:VEVENT
+UID:ical-no-dtstart@learn.senecapolytechnic.ca
+SUMMARY:BTI325 - Web Programming - Missing DTSTART
+DESCRIPTION:This event has no DTSTART and must be skipped
+END:VEVENT
+
+BEGIN:VEVENT
+UID:ical-empty-summary@learn.senecapolytechnic.ca
+DTSTART;TZID=America/Toronto:20260415T120000
+DTEND;TZID=America/Toronto:20260415T120000
+SUMMARY:
+DESCRIPTION:Empty summary — must be skipped
+END:VEVENT
+
+END:VCALENDAR
