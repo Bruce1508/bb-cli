@@ -136,3 +136,13 @@ Configured in `~/.bb/config.toml`. Default: new deadline → normal priority; de
 - Save real Blackboard HTML as fixtures for offline adapter testing
 - Mock Playwright for integration tests
 - Target: >70% coverage before PyPI release
+- Typer app must have 2+ commands — single-command apps collapse into standalone mode, breaking `runner.invoke(app, ["subcommand"])` in tests
+- Patch `BB_DIR` in tests via `unittest.mock.patch("bb.config.BB_DIR", tmp_path)` and `patch("bb.db.BB_DIR", tmp_path)` — `Database.__init__` uses `path=None` pattern so `BB_DIR` is resolved at call time, not import time
+- WAL pragma does nothing on `:memory:` — test WAL mode with a real `tempfile.NamedTemporaryFile`
+
+## Gotchas & Environment Notes
+
+- **Hatchling package discovery**: `pyproject.toml` requires `[tool.hatch.build.targets.wheel] packages = ["bb"]` — hatchling cannot auto-discover `bb` from the hyphenated project name `bb-cli`
+- **uv dev deps syntax**: Use `[dependency-groups] dev = [...]` (PEP 735), NOT `[tool.uv] dev-dependencies` — the latter is deprecated and will break in future uv versions
+- **SQLite migrations**: Use `connection.executescript()` (not `execute()`) for multi-statement SQL migration strings — handles multiple statements and auto-commits
+- **CLI not found after uv sync**: If `uv run bb` gives `ModuleNotFoundError`, run `uv pip install -e .` to force editable install registration
