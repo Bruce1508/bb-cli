@@ -165,18 +165,16 @@ def test_init_twice_config_is_valid(tmp_path):
 
 
 def test_init_twice_database_still_valid(tmp_path):
-    """DB schema_version remains 1 (not duplicated) after two 'bb init' runs."""
+    """DB schema_version has one row per migration (not duplicated) after two 'bb init' runs."""
     _invoke_init(tmp_path)
     _invoke_init(tmp_path)
     conn = sqlite3.connect(str(tmp_path / "bb.db"))
-    cursor = conn.execute("SELECT COUNT(*) FROM schema_version")
-    count = cursor.fetchone()[0]
-    cursor2 = conn.execute("SELECT version FROM schema_version")
-    version = cursor2.fetchone()[0]
+    count = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
+    max_version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     conn.close()
 
-    assert count == 1
-    assert version == 1
+    assert count == 2  # one row per migration version, not duplicated
+    assert max_version == 2
 
 
 # ---------------------------------------------------------------------------

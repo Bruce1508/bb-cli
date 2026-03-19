@@ -30,3 +30,11 @@ def get_adapter(name: str) -> type["LMSAdapter"]:
     if name not in _registry:
         raise KeyError(f"No adapter registered for '{name}'")
     return _registry[name]
+
+
+def discover_adapters() -> dict[str, type["LMSAdapter"]]:
+    """Return a shallow copy of all currently registered adapters.
+
+    Returns a copy so callers cannot mutate the internal registry.
+    """
+    return dict(_registry)
