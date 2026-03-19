@@ -206,3 +206,78 @@ def due(
         )
 
     console.print(table)
+
+
+@app.command()
+def auth() -> None:
+    """Open headed Chromium for Blackboard login and save encrypted session."""
+    # Local imports — Playwright is heavy; don't pay startup cost for other commands
+    from playwright.sync_api import TimeoutError as PlaywrightTimeout
+
+    from bb.adapters.blackboard_ultra import BlackboardUltraAdapter  # triggers @register
+    from bb.security.session import SessionManager
+
+    cfg = load_config()
+    BB_DIR = _config_module.BB_DIR
+    sm = SessionManager(BB_DIR / "session.enc")
+    adapter = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm)
+
+    console.print(f"[bold]Authenticating against:[/bold] {cfg.lms_url}")
+    try:
+        adapter.authenticate()
+    except PlaywrightTimeout:
+        raise typer.Exit(code=1)
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def status() -> None:
+    """Show session health, last sync time, and DB stats."""
+    import sqlite3
+
+    from bb.security.session import SessionManager
+
+    BB_DIR = _config_module.BB_DIR
+    sm = SessionManager(BB_DIR / "session.enc")
+
+    # --- Session health ---
+    age_status = sm.check_session_age()
+    mtime = sm._mtime()
+    if age_status == "fresh":
+        age_label = "[green]fresh[/green]"
+        if mtime:
+            hours_ago = (datetime.now(timezone.utc) - mtime).total_seconds() / 3600
+            age_label += f" ({hours_ago:.1f}h old)"
+    elif age_status == "uncertain":
+        age_label = "[yellow]uncertain[/yellow] (run bb sync to verify)"
+    else:
+        age_label = "[red]expired[/red] — run bb auth"
+
+    console.print(f"[bold]Session:[/bold] {age_label}")
+
+    # --- DB stats ---
+    db_path = BB_DIR / "bb.db"
+    if not db_path.exists():
+        console.print("[bold]DB:[/bold] not initialized — run bb init")
+        return
+
+    try:
+        with Database(db_path) as db:
+            db.setup()
+            deadlines = db._conn.execute("SELECT COUNT(*) FROM deadlines").fetchone()[0]
+            announcements = db._conn.execute("SELECT COUNT(*) FROM announcements").fetchone()[0]
+            grades = db._conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0]
+            last_sync_row = db._conn.execute(
+                "SELECT MAX(synced_at) FROM sync_log"
+            ).fetchone()
+            last_sync = last_sync_row[0] if last_sync_row and last_sync_row[0] else "never"
+    except sqlite3.OperationalError:
+        console.print("[bold]DB:[/bold] not initialized — run bb init")
+        return
+
+    console.print(f"[bold]Last sync:[/bold] {last_sync}")
+    console.print(
+        f"[bold]DB:[/bold] {deadlines} deadlines, {announcements} announcements, {grades} grades"
+    )

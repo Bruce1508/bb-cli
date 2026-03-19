@@ -1,0 +1,42 @@
+# selectors/blackboard_ultra.toml
+# CSS selector pairs for Blackboard Ultra scraping.
+# Edit here when BB modifies its DOM — no code changes needed.
+# Each entry has a primary selector and a _fallback for resilience.
+
+[auth]
+# Confirms successful login to the Ultra dashboard
+dashboard_indicator = "[data-testid='ultra-header']"
+dashboard_indicator_fallback = "bb-base-layout"
+
+[activity_stream]
+# Wrapper around the full activity stream
+container = "[data-testid='activity-stream-list']"
+container_fallback = ".activity-stream-container"
+# Individual stream entry
+item = "[data-testid='activity-stream-item']"
+item_fallback = ".stream-item"
+# Course name within an entry
+course_name = "[analytics-id='stream.entry.course']"
+course_name_fallback = ".course-item__name"
+# Entry title / assignment name
+title = ".name a.js-title-link"
+title_fallback = "[data-testid='stream-item-title']"
+# Due date text node
+due_date = ".content .due-date bb-translate"
+due_date_fallback = "[data-testid='due-date']"
+
+[grades]
+grade_row = "[data-testid='grade-row']"
+grade_row_fallback = ".graded-item-row"
+score = "[data-testid='grade-score']"
+score_fallback = ".grade-score-value"
+out_of = "[data-testid='grade-out-of']"
+out_of_fallback = ".grade-out-of-value"
+
+[course_content]
+content_list = "[data-testid='course-content-list']"
+content_list_fallback = ".course-content__list"
+content_item = "[data-testid='content-item']"
+content_item_fallback = ".content-list-item"
+file_link = "[data-testid='file-attachment-link']"
+file_link_fallback = "a[href*='/bbcswebdav/']"
