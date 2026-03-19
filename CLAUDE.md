@@ -146,3 +146,4 @@ Configured in `~/.bb/config.toml`. Default: new deadline → normal priority; de
 - **uv dev deps syntax**: Use `[dependency-groups] dev = [...]` (PEP 735), NOT `[tool.uv] dev-dependencies` — the latter is deprecated and will break in future uv versions
 - **SQLite migrations**: Use `connection.executescript()` (not `execute()`) for multi-statement SQL migration strings — handles multiple statements and auto-commits
 - **CLI not found after uv sync**: If `uv run bb` gives `ModuleNotFoundError`, run `uv pip install -e .` to force editable install registration
+- **`git filter-repo` removes remote**: After running `git filter-repo`, remote is deleted — re-add with `git remote add origin <url>` before force pushing
