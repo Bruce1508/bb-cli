@@ -26,12 +26,26 @@ due_date = ".content .due-date bb-translate"
 due_date_fallback = "[data-testid='due-date']"
 
 [grades]
+# Path appended to lms_url to reach the grades page
+grades_path = "/ultra/grades"
+# Table row / card per grade entry
 grade_row = "[data-testid='grade-row']"
 grade_row_fallback = ".graded-item-row"
+# Course name within a grade row
+course_name = "[data-testid='grade-course-name']"
+course_name_fallback = ".course-name"
+# Assignment / item title
+item_title = "[data-testid='grade-item-title']"
+item_title_fallback = ".grade-item-title"
+# Numeric score
 score = "[data-testid='grade-score']"
 score_fallback = ".grade-score-value"
+# Max points denominator
 out_of = "[data-testid='grade-out-of']"
 out_of_fallback = ".grade-out-of-value"
+# Status badge (e.g. "Graded", "Submitted", "Needs Grading")
+status = "[data-testid='grade-status']"
+status_fallback = ".grade-status-label"
 
 [course_content]
 content_list = "[data-testid='course-content-list']"

@@ -124,14 +124,111 @@ class BlackboardUltraAdapter(LMSAdapter):
                     if parsed is not None:
                         items.append(parsed)
 
+                # Capture page HTML for snapshot when 0 items scraped
+                self._last_page_html = page.content() if not items else None
+
             finally:
                 browser.close()
 
         return items
 
     def fetch_grades(self) -> list[GradeItem]:
-        """Stub — implemented Day 6."""
-        return []
+        """Scrape the Blackboard Ultra Grades page and return typed GradeItem objects.
+
+        Navigates to /ultra/grades (headless), parses each grade row using
+        selectors from blackboard_ultra.toml.
+
+        Raises SessionError if the session file is missing or corrupt.
+        """
+        from playwright.sync_api import sync_playwright
+
+        state = self._sm.decrypt_session()  # raises SessionError if missing/corrupt
+
+        sel = self._selectors.get("grades", {})
+        grades_path = sel.get("grades_path", "/ultra/grades")
+        items: list[GradeItem] = []
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(storage_state=state)
+            page = context.new_page()
+
+            try:
+                page.goto(
+                    f"{self._lms_url}{grades_path}",
+                    wait_until="networkidle",
+                    timeout=STREAM_TIMEOUT_MS,
+                )
+
+                row_sel = sel.get("grade_row", "[data-testid='grade-row']")
+                row_fallback = sel.get("grade_row_fallback", ".graded-item-row")
+                rows = page.query_selector_all(row_sel)
+                if not rows:
+                    rows = page.query_selector_all(row_fallback)
+
+                for row in rows[:MAX_STREAM_ITEMS]:
+                    item = self._parse_grade_row(row, sel)
+                    if item is not None:
+                        items.append(item)
+
+            finally:
+                browser.close()
+
+        return items
+
+    def _parse_grade_row(self, row: object, sel: dict) -> GradeItem | None:
+        """Parse one grades-page row into a GradeItem.
+
+        Returns None if the row is missing a title (malformed / header row).
+        """
+        # Course name
+        course_sel = sel.get("course_name", "[data-testid='grade-course-name']")
+        course_fallback = sel.get("course_name_fallback", ".course-name")
+        course_elem = row.query_selector(course_sel) or row.query_selector(course_fallback)
+        course = course_elem.inner_text().strip() if course_elem else "Unknown"
+
+        # Item title — required
+        title_sel = sel.get("item_title", "[data-testid='grade-item-title']")
+        title_fallback = sel.get("item_title_fallback", ".grade-item-title")
+        title_elem = row.query_selector(title_sel) or row.query_selector(title_fallback)
+        if title_elem is None:
+            return None
+        title = title_elem.inner_text().strip()
+        if not title:
+            return None
+
+        # Score
+        score_sel = sel.get("score", "[data-testid='grade-score']")
+        score_fallback = sel.get("score_fallback", ".grade-score-value")
+        score_elem = row.query_selector(score_sel) or row.query_selector(score_fallback)
+        score = _parse_float(score_elem.inner_text().strip()) if score_elem else None
+
+        # Out-of denominator
+        out_of_sel = sel.get("out_of", "[data-testid='grade-out-of']")
+        out_of_fallback = sel.get("out_of_fallback", ".grade-out-of-value")
+        out_of_elem = row.query_selector(out_of_sel) or row.query_selector(out_of_fallback)
+        out_of = _parse_float(out_of_elem.inner_text().strip()) if out_of_elem else None
+
+        # Status badge
+        status_sel = sel.get("status", "[data-testid='grade-status']")
+        status_fallback = sel.get("status_fallback", ".grade-status-label")
+        status_elem = row.query_selector(status_sel) or row.query_selector(status_fallback)
+        raw_status = status_elem.inner_text().strip().lower() if status_elem else ""
+        if "graded" in raw_status or score is not None:
+            status = "graded"
+        elif "submitted" in raw_status:
+            status = "submitted"
+        else:
+            status = "pending"
+
+        return GradeItem(
+            id=content_hash(course, title, ""),
+            course=course,
+            item=title,
+            score=score,
+            out_of=out_of,
+            status=status,
+        )
 
     def fetch_course_content(self, course_id: str) -> object:
         """Stub — implemented Day 8."""
