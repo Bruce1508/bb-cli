@@ -382,6 +382,14 @@ def sync(
         with Database(db_path) as db:
             db.setup()
             db.log_sync("stream", 0, 0, error="session_expired")
+            if not db.was_notified_recently("session_expired", within_hours=24):
+                dispatch_notify(
+                    cfg.notification.provider,
+                    "bb — Session Expired",
+                    "Run `bb auth` to re-authenticate.",
+                    cfg.notification.ntfy_topic,
+                )
+                db.log_notification("session_expired")
     except Exception as exc:
         console.print(f"[red]Error:[/red] Activity Stream sync failed: {exc}")
         with Database(db_path) as db:

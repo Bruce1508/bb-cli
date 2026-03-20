@@ -191,7 +191,9 @@ def _bb_executable() -> str:
     bb = shutil.which("bb")
     if bb:
         return os.path.abspath(bb)
-    return sys.executable
+    # Fallback for editable installs without bb in PATH.
+    # Note: this works for crontab (shell context); launchd requires bb in PATH.
+    return f"{sys.executable} -m bb"
 
 
 # ------------------------------------------------------------------
@@ -203,11 +205,18 @@ def install_auto_sync(interval_hours: int = 4) -> tuple[str, str]:
     """Install OS-native scheduler to run bb sync every interval_hours.
 
     Returns (platform_label, detail_message).
-    Raises RuntimeError on unsupported platform.
+    Raises RuntimeError on unsupported platform or when bb is not in PATH on macOS.
     """
     plat = _platform()
     if plat == "macos":
-        return "macOS", install_macos(interval_hours, _bb_executable())
+        # launchd uses execvp (no shell) — bb must be a real binary in PATH.
+        bb = shutil.which("bb")
+        if not bb:
+            raise RuntimeError(
+                "Cannot find `bb` in PATH. Install bb-cli globally "
+                "(`uv tool install bb-cli`) before setting up auto-sync."
+            )
+        return "macOS", install_macos(interval_hours, os.path.abspath(bb))
     elif plat == "linux":
         return "Linux", install_linux(interval_hours, _bb_executable())
     else:
