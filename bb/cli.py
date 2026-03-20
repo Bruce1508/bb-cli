@@ -10,6 +10,7 @@ from rich.console import Console
 from rich.table import Table
 
 import bb.config as _config_module
+from bb.auto_setup import install_auto_sync, uninstall_auto_sync
 from bb.config import BBConfig, NotificationConfig, load_config, save_config
 from bb.db import Database
 from bb.notify import dispatch_notify
@@ -392,6 +393,36 @@ def sync(
         label = f"{total_new} new item{'s' if total_new != 1 else ''} synced"
         dispatch_notify(cfg.notification.provider, "bb", label, cfg.notification.ntfy_topic)
         console.print(f"[blue]🔔[/blue] {label}")
+
+
+@app.command()
+def auto_setup(
+    disable: bool = typer.Option(False, "--disable", help="Remove auto-sync scheduler"),
+    interval: int = typer.Option(
+        0, "--interval", "-i", help="Sync interval in hours (0 = use config value)"
+    ),
+) -> None:
+    """Install (or remove) OS-native auto-sync scheduler."""
+    cfg = load_config()
+    interval_hours = interval if interval > 0 else cfg.sync_interval_hours
+
+    if disable:
+        try:
+            platform, msg = uninstall_auto_sync()
+            console.print(f"[green]✔[/green] Detected: {platform}")
+            console.print(msg)
+            console.print("[green]✔[/green] Auto-sync disabled.")
+        except RuntimeError as exc:
+            console.print(f"[yellow]⚠[/yellow] {exc}")
+            raise typer.Exit(code=1)
+    else:
+        try:
+            platform, msg = install_auto_sync(interval_hours=interval_hours)
+            console.print(f"[green]✔[/green] Detected: {platform}")
+            console.print(msg)
+        except RuntimeError as exc:
+            console.print(f"[yellow]⚠[/yellow] {exc}")
+            raise typer.Exit(code=1)
 
 
 @app.command()
