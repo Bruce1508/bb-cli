@@ -16,9 +16,11 @@ def register(name: str):
         class BlackboardUltraAdapter(LMSAdapter):
             ...
     """
+
     def decorator(cls: type["LMSAdapter"]) -> type["LMSAdapter"]:
         _registry[name] = cls
         return cls
+
     return decorator
 
 

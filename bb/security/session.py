@@ -14,9 +14,9 @@ from cryptography.fernet import Fernet, InvalidToken
 BB_DIR = Path.home() / ".bb"
 
 # Age thresholds in seconds
-FRESH_THRESHOLD: int = 6 * 3600       # < 6 h  → fresh
+FRESH_THRESHOLD: int = 6 * 3600  # < 6 h  → fresh
 UNCERTAIN_THRESHOLD: int = 24 * 3600  # 6–24 h → uncertain
-                                       # ≥ 24 h → expired
+# ≥ 24 h → expired
 
 KEYRING_SERVICE: str = "bb-cli"
 KEYRING_USERNAME: str = "fernet-key"
@@ -97,6 +97,7 @@ class SessionManager:
             return stored
         # Keyring unavailable or empty — derive from user password
         import typer
+
         password = typer.prompt("Session password (used to encrypt your session)", hide_input=True)
         return self._derive_key_from_password(password)
 

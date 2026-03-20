@@ -40,6 +40,7 @@ class LMSAdapter(ABC):
 
     @abstractmethod
     def check_session(self) -> str: ...
+
     # Returns: 'fresh' | 'uncertain' | 'expired'
 
     @abstractmethod

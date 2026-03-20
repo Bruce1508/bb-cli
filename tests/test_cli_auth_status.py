@@ -193,7 +193,7 @@ def test_status_shows_all_counts_together(tmp_path):
     _seed_db(tmp_path, deadlines=2, announcements=1, grades=4)
     result = _invoke_status(tmp_path)
     assert "2 deadlines" in result.output
-    assert "1 announcements" in result.output
+    assert "1 announcement" in result.output
     assert "4 grades" in result.output
 
 

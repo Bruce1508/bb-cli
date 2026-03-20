@@ -3,7 +3,7 @@ Tests for `bb import-ical` command in bb/cli.py
 
 Strategy:
 - Mock httpx.get to return fixture content (no real HTTP)
-- Mock bb.cli.notify to suppress real OS notifications
+- Mock bb.cli.dispatch_notify to suppress real OS notifications
 - Patch bb.config.BB_DIR → tmp_path for DB isolation
 
 Success criteria:
@@ -61,7 +61,7 @@ def _invoke_import(tmp_path, *extra_args: str, ics_text: str = SAMPLE_ICS):
     with (
         patch("bb.config.BB_DIR", tmp_path),
         patch("httpx.get", return_value=_mock_response(ics_text)),
-        patch("bb.cli.notify"),
+        patch("bb.cli.dispatch_notify"),
     ):
         return runner.invoke(app, ["import-ical", TEST_URL, *extra_args])
 
@@ -143,7 +143,7 @@ def test_import_ical_http_404_exits_with_code_1(tmp_path):
         patch("httpx.get", return_value=MagicMock(
             raise_for_status=MagicMock(side_effect=_http_status_error(404))
         )),
-        patch("bb.cli.notify"),
+        patch("bb.cli.dispatch_notify"),
     ):
         result = runner.invoke(app, ["import-ical", TEST_URL])
     assert result.exit_code == 1
@@ -155,7 +155,7 @@ def test_import_ical_http_404_shows_status_code(tmp_path):
         patch("httpx.get", return_value=MagicMock(
             raise_for_status=MagicMock(side_effect=_http_status_error(404))
         )),
-        patch("bb.cli.notify"),
+        patch("bb.cli.dispatch_notify"),
     ):
         result = runner.invoke(app, ["import-ical", TEST_URL])
     assert "404" in result.output
@@ -167,7 +167,7 @@ def test_import_ical_http_500_exits_with_code_1(tmp_path):
         patch("httpx.get", return_value=MagicMock(
             raise_for_status=MagicMock(side_effect=_http_status_error(500))
         )),
-        patch("bb.cli.notify"),
+        patch("bb.cli.dispatch_notify"),
     ):
         result = runner.invoke(app, ["import-ical", TEST_URL])
     assert result.exit_code == 1
@@ -183,7 +183,7 @@ def test_import_ical_network_error_exits_with_code_1(tmp_path):
     with (
         patch("bb.config.BB_DIR", tmp_path),
         patch("httpx.get", side_effect=httpx.RequestError("Connection refused")),
-        patch("bb.cli.notify"),
+        patch("bb.cli.dispatch_notify"),
     ):
         result = runner.invoke(app, ["import-ical", TEST_URL])
     assert result.exit_code == 1
@@ -194,7 +194,7 @@ def test_import_ical_network_error_message_mentions_url(tmp_path):
     with (
         patch("bb.config.BB_DIR", tmp_path),
         patch("httpx.get", side_effect=httpx.RequestError("Connection refused")),
-        patch("bb.cli.notify"),
+        patch("bb.cli.dispatch_notify"),
     ):
         result = runner.invoke(app, ["import-ical", TEST_URL])
     assert "could not reach" in result.output
@@ -209,7 +209,7 @@ def test_import_ical_parse_error_exits_with_code_1(tmp_path):
     with (
         patch("bb.config.BB_DIR", tmp_path),
         patch("httpx.get", return_value=_mock_response("garbage\x00\x01")),
-        patch("bb.cli.notify"),
+        patch("bb.cli.dispatch_notify"),
     ):
         result = runner.invoke(app, ["import-ical", TEST_URL])
     # parse_ical raises ICalParseError → exit 1
@@ -260,7 +260,7 @@ def test_import_ical_dry_run_does_not_send_notification(tmp_path):
     with (
         patch("bb.config.BB_DIR", tmp_path),
         patch("httpx.get", return_value=_mock_response()),
-        patch("bb.cli.notify") as mock_notify,
+        patch("bb.cli.dispatch_notify") as mock_notify,
     ):
         runner.invoke(app, ["import-ical", TEST_URL, "--dry-run"])
     mock_notify.assert_not_called()
@@ -275,7 +275,7 @@ def test_import_ical_sends_notification_on_new_deadlines(tmp_path):
     with (
         patch("bb.config.BB_DIR", tmp_path),
         patch("httpx.get", return_value=_mock_response()),
-        patch("bb.cli.notify") as mock_notify,
+        patch("bb.cli.dispatch_notify") as mock_notify,
     ):
         runner.invoke(app, ["import-ical", TEST_URL])
     mock_notify.assert_called_once()
@@ -285,14 +285,14 @@ def test_import_ical_no_notification_on_second_run(tmp_path):
     with (
         patch("bb.config.BB_DIR", tmp_path),
         patch("httpx.get", return_value=_mock_response()),
-        patch("bb.cli.notify"),
+        patch("bb.cli.dispatch_notify"),
     ):
         runner.invoke(app, ["import-ical", TEST_URL])  # first run
 
     with (
         patch("bb.config.BB_DIR", tmp_path),
         patch("httpx.get", return_value=_mock_response()),
-        patch("bb.cli.notify") as mock_notify,
+        patch("bb.cli.dispatch_notify") as mock_notify,
     ):
         runner.invoke(app, ["import-ical", TEST_URL])  # second run — all existing
     mock_notify.assert_not_called()

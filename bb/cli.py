@@ -12,7 +12,7 @@ from rich.table import Table
 import bb.config as _config_module
 from bb.config import BBConfig, NotificationConfig, load_config, save_config
 from bb.db import Database
-from bb.notify.terminal import notify
+from bb.notify import dispatch_notify
 from bb.parsers.ical import ICalParseError, parse_ical
 
 app = typer.Typer(help="bb — Blackboard LMS terminal client")
@@ -135,7 +135,8 @@ def import_ical(
     # --- Notify ---
     if new_count > 0:
         label = f"{new_count} new deadline{'s' if new_count != 1 else ''} synced"
-        notify("bb", label)
+        cfg2 = load_config()
+        dispatch_notify(cfg2.notification.provider, "bb", label, cfg2.notification.ntfy_topic)
         console.print(f"[blue]🔔[/blue] {label}")
 
 
@@ -192,7 +193,8 @@ def due(
         if delta < timedelta(hours=24):
             urgency = "🔴"
             due_style = "bold red"
-            if delta.days == 0:
+            now_local = datetime.now().astimezone()
+            if local_due.date() == (now_local + timedelta(days=1)).date():
                 due_str = f"Tomorrow {local_due.strftime('%I:%M %p')}"
             else:
                 due_str = local_due.strftime("%a %b %-d, %H:%M")
@@ -274,21 +276,43 @@ def status() -> None:
             db.setup()
             deadlines = db._conn.execute("SELECT COUNT(*) FROM deadlines").fetchone()[0]
             announcements = db._conn.execute("SELECT COUNT(*) FROM announcements").fetchone()[0]
-            grades = db._conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0]
-            last_sync_row = db._conn.execute("SELECT MAX(synced_at) FROM sync_log").fetchone()
-            last_sync = last_sync_row[0] if last_sync_row and last_sync_row[0] else "never"
+            grade_count = db._conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0]
+            sync_rows = db._conn.execute(
+                "SELECT synced_at, source, items_new, items_updated, error"
+                " FROM sync_log ORDER BY synced_at DESC LIMIT 3"
+            ).fetchall()
     except sqlite3.OperationalError:
         console.print("[bold]DB:[/bold] not initialized — run bb init")
         return
 
-    console.print(f"[bold]Last sync:[/bold] {last_sync}")
     console.print(
-        f"[bold]DB:[/bold] {deadlines} deadlines, {announcements} announcements, {grades} grades"
+        f"[bold]DB:[/bold] {deadlines} deadline{'s' if deadlines != 1 else ''}, "
+        f"{announcements} announcement{'s' if announcements != 1 else ''}, "
+        f"{grade_count} grade{'s' if grade_count != 1 else ''}"
     )
+
+    if not sync_rows:
+        console.print("[bold]Last syncs:[/bold] never")
+    else:
+        console.print("[bold]Last syncs:[/bold]")
+        for synced_at, source, items_new, items_updated, error in sync_rows:
+            status_icon = "[red]✗[/red]" if error else "[green]✔[/green]"
+            err_note = f" [red]({error})[/red]" if error else ""
+            console.print(
+                f"  {status_icon} {synced_at}  [{source}]  "
+                f"{items_new} new, {items_updated} updated{err_note}"
+            )
 
 
 @app.command()
-def sync() -> None:
+def sync(
+    ical_only: bool = typer.Option(
+        False, "--ical-only", help="Only run Phase 1 (iCal), skip browser scrape"
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Fetch iCal and report counts without writing to DB"
+    ),
+) -> None:
     """Sync deadlines, announcements, and grades from Blackboard."""
     from bb.adapters.blackboard_ultra import BlackboardUltraAdapter
     from bb.security.session import SessionError, SessionManager
@@ -302,6 +326,21 @@ def sync() -> None:
     # --- Phase 1: iCal ---
     if cfg.ical_url:
         console.print("⟳ Phase 1: iCal sync...")
+        if dry_run:
+            try:
+                import httpx as _httpx
+
+                from bb.parsers.ical import parse_ical as _parse_ical
+
+                resp = _httpx.get(cfg.ical_url, follow_redirects=True, timeout=30)
+                resp.raise_for_status()
+                deadlines = _parse_ical(resp.text)
+                console.print(
+                    f"[dim][dry-run] Would import {len(deadlines)} deadlines from iCal[/dim]"
+                )
+            except Exception as exc:
+                console.print(f"[yellow]⚠[/yellow] iCal fetch failed: {exc}")
+            return
         try:
             with Database(db_path) as db:
                 db.setup()
@@ -311,8 +350,14 @@ def sync() -> None:
             console.print(f"[green]✔[/green] {new + updated} deadlines ({new} new)")
         except Exception as exc:
             console.print(f"[yellow]⚠[/yellow] iCal sync failed: {exc}")
+            with Database(db_path) as db:
+                db.setup()
+                db.log_sync("ical", 0, 0, error=str(exc))
     else:
         console.print("[dim]Phase 1: No iCal URL configured — run bb import-ical <url> first[/dim]")
+
+    if ical_only or dry_run:
+        return
 
     # --- Phase 2: Activity Stream ---
     console.print("⟳ Phase 2: Activity Stream...")
@@ -333,14 +378,89 @@ def sync() -> None:
             "[yellow]⚠[/yellow] Session expired. Run [bold]bb auth[/bold] to re-authenticate."
         )
         console.print("[dim]↩ Activity Stream skipped — iCal sync only.[/dim]")
+        with Database(db_path) as db:
+            db.setup()
+            db.log_sync("stream", 0, 0, error="session_expired")
     except Exception as exc:
         console.print(f"[red]Error:[/red] Activity Stream sync failed: {exc}")
+        with Database(db_path) as db:
+            db.setup()
+            db.log_sync("stream", 0, 0, error=str(exc))
 
     # --- Notify ---
     if total_new > 0:
         label = f"{total_new} new item{'s' if total_new != 1 else ''} synced"
-        notify("bb", label)
+        dispatch_notify(cfg.notification.provider, "bb", label, cfg.notification.ntfy_topic)
         console.print(f"[blue]🔔[/blue] {label}")
+
+
+@app.command()
+def grades(
+    course: Optional[str] = typer.Option(None, "--course", "-c", help="Filter by course code"),
+    output_json: bool = typer.Option(False, "--json", help="Output as JSON array"),
+) -> None:
+    """Show grades from the database."""
+    BB_DIR = _config_module.BB_DIR
+    with Database(BB_DIR / "bb.db") as db:
+        db.setup()
+        query = "SELECT id, course, item, score, out_of, status, notified_at FROM grades"
+        params: list = []
+        if course:
+            query += " WHERE UPPER(course) = UPPER(?)"
+            params.append(course)
+        query += " ORDER BY course, item"
+        rows = db._conn.execute(query, params).fetchall()
+
+    if output_json:
+        data = [
+            {
+                "course": r[1],
+                "item": r[2],
+                "score": r[3],
+                "out_of": r[4],
+                "status": r[5],
+            }
+            for r in rows
+        ]
+        console.print(json.dumps(data, indent=2))
+        return
+
+    if not rows:
+        filter_note = f" for {course.upper()}" if course else ""
+        console.print(f"No grades found{filter_note}.")
+        return
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Course", style="cyan", min_width=8)
+    table.add_column("Assignment", min_width=25)
+    table.add_column("Score", min_width=10)
+    table.add_column("Status", min_width=10)
+
+    for r in rows:
+        _, course_val, item, score, out_of, status, notified_at = r
+        # Format score/out_of
+        if score is not None and out_of is not None:
+            score_str = f"{score:.1f} / {out_of:.1f}"
+        elif score is not None:
+            score_str = f"{score:.1f}"
+        else:
+            score_str = "—"
+
+        # Highlight NEW (unnotified graded) items
+        is_new = notified_at is None and status == "graded"
+        if is_new:
+            score_str = f"[bold green]{score_str}[/bold green]"
+            item = f"[bold]{item}[/bold]"
+
+        if status == "graded":
+            status_style = "green"
+        elif status == "submitted":
+            status_style = "yellow"
+        else:
+            status_style = "dim"
+        table.add_row(course_val, item, score_str, f"[{status_style}]{status}[/{status_style}]")
+
+    console.print(table)
 
 
 @app.command()
