@@ -143,19 +143,44 @@ def test_selectors_activity_stream_has_item():
 
 
 # ---------------------------------------------------------------------------
-# Day 5 stub methods — return correct types now
+# Day 5 — fetch_activity_stream real implementation
 # ---------------------------------------------------------------------------
 
 
-def test_fetch_activity_stream_stub_returns_list():
-    adapter = _make_adapter()
-    result = adapter.fetch_activity_stream()
-    assert isinstance(result, list)
+def test_fetch_activity_stream_raises_session_error_when_no_session():
+    """If decrypt_session fails, SessionError propagates to the caller."""
+    from bb.security.session import SessionError
+
+    sm = MagicMock(spec=SessionManager)
+    sm.decrypt_session.side_effect = SessionError("No session file")
+    adapter = BlackboardUltraAdapter(lms_url="https://learn.example.com", session_manager=sm)
+    with pytest.raises(SessionError):
+        adapter.fetch_activity_stream()
 
 
-def test_fetch_activity_stream_stub_returns_empty_list():
-    adapter = _make_adapter()
-    assert adapter.fetch_activity_stream() == []
+def test_fetch_activity_stream_returns_empty_list_when_no_stream_items(tmp_path):
+    """With a valid session and an empty stream page, returns []."""
+    from unittest.mock import patch
+
+    sm = MagicMock(spec=SessionManager)
+    sm.decrypt_session.return_value = {"cookies": [], "origins": []}
+    adapter = BlackboardUltraAdapter(lms_url="https://learn.example.com", session_manager=sm)
+
+    mock_page = MagicMock()
+    mock_page.query_selector_all.return_value = []
+    mock_context = MagicMock()
+    mock_context.new_page.return_value = mock_page
+    mock_browser = MagicMock()
+    mock_browser.new_context.return_value = mock_context
+    mock_p = MagicMock()
+    mock_p.chromium.launch.return_value = mock_browser
+
+    with patch("playwright.sync_api.sync_playwright") as mock_pw:
+        mock_pw.return_value.__enter__ = lambda self: mock_p
+        mock_pw.return_value.__exit__ = MagicMock(return_value=False)
+        result = adapter.fetch_activity_stream()
+
+    assert result == []
 
 
 def test_fetch_grades_stub_returns_list():

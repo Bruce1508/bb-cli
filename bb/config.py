@@ -21,6 +21,7 @@ class NotificationConfig(BaseModel):
 class BBConfig(BaseModel):
     lms_type: Literal["blackboard_ultra"] = "blackboard_ultra"
     lms_url: str = "https://learn.senecapolytechnic.ca"
+    ical_url: str | None = None  # saved automatically after first bb import-ical run
     notification: NotificationConfig = NotificationConfig()
     sync_interval_hours: int = 4  # used by bb auto-setup (Day 7)
 
@@ -40,4 +41,5 @@ def save_config(cfg: BBConfig) -> None:
     BB_DIR.mkdir(parents=True, exist_ok=True)
     config_path = BB_DIR / "config.toml"
     with config_path.open("wb") as f:
-        tomli_w.dump(cfg.model_dump(), f)
+        # exclude_none=True: TOML has no null type; omit optional fields when unset
+        tomli_w.dump(cfg.model_dump(exclude_none=True), f)

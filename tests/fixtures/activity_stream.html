@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<!--
+  Synthetic Blackboard Ultra Activity Stream fixture.
+  Matches selectors in selectors/blackboard_ultra.toml.
+  Used for offline adapter testing (Day 6+).
+
+  Contains:
+    - 2 Deadline items   (have .due-date bb-translate)
+    - 2 Announcement items (no due-date, no grade-score)
+    - 1 GradeItem        (has [data-testid='grade-score'])
+    - 1 item with no title  (should be skipped by parser)
+-->
+<html>
+<body>
+  <ul data-testid="activity-stream-list">
+
+    <!-- Deadline 1: BTI325 Lab 5 -->
+    <li data-testid="activity-stream-item">
+      <div class="context">
+        <a analytics-id="stream.entry.course">BTI325</a>
+      </div>
+      <div class="name">
+        <a class="js-title-link" href="/ultra/courses/BTI325/assignments/lab5">
+          Lab 5 - HTTP Methods
+        </a>
+      </div>
+      <div class="content">
+        <span class="due-date">
+          <bb-translate>Jan 20, 2026 at 11:59 PM</bb-translate>
+        </span>
+      </div>
+    </li>
+
+    <!-- Deadline 2: OOP244 Workshop 7 -->
+    <li data-testid="activity-stream-item">
+      <div class="context">
+        <a analytics-id="stream.entry.course">OOP244</a>
+      </div>
+      <div class="name">
+        <a class="js-title-link" href="/ultra/courses/OOP244/assignments/ws7">
+          Workshop 7
+        </a>
+      </div>
+      <div class="content">
+        <span class="due-date">
+          <bb-translate>Jan 22, 2026 at 11:59 PM</bb-translate>
+        </span>
+      </div>
+    </li>
+
+    <!-- Announcement 1: BTI325 lab update -->
+    <li data-testid="activity-stream-item">
+      <div class="context">
+        <a analytics-id="stream.entry.course">BTI325</a>
+      </div>
+      <div class="name">
+        <a class="js-title-link" href="/ultra/courses/BTI325/announcements/ann1">
+          Lab 5 Requirements Updated
+        </a>
+      </div>
+      <div class="content">
+        <!-- no due-date, no grade-score → Announcement -->
+      </div>
+    </li>
+
+    <!-- Announcement 2: OOP244 review session -->
+    <li data-testid="activity-stream-item">
+      <div class="context">
+        <a analytics-id="stream.entry.course">OOP244</a>
+      </div>
+      <div class="name">
+        <a class="js-title-link" href="/ultra/courses/OOP244/announcements/ann2">
+          Midterm Review Session
+        </a>
+      </div>
+      <div class="content">
+        <!-- no due-date, no grade-score → Announcement -->
+      </div>
+    </li>
+
+    <!-- GradeItem: BTI325 Lab 4 graded -->
+    <li data-testid="activity-stream-item">
+      <div class="context">
+        <a analytics-id="stream.entry.course">BTI325</a>
+      </div>
+      <div class="name">
+        <!-- fallback title selector -->
+        <a data-testid="stream-item-title" href="/ultra/courses/BTI325/grades/lab4">
+          Lab 4 Graded
+        </a>
+      </div>
+      <div class="content">
+        <span data-testid="grade-score">18</span>
+        <span data-testid="grade-out-of">20</span>
+      </div>
+    </li>
+
+    <!-- Invalid item: no title — should be skipped -->
+    <li data-testid="activity-stream-item">
+      <div class="context">
+        <a analytics-id="stream.entry.course">BTI325</a>
+      </div>
+      <div class="name">
+        <!-- intentionally missing title element -->
+      </div>
+      <div class="content"></div>
+    </li>
+
+  </ul>
+</body>
+</html>

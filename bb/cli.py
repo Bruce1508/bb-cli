@@ -23,6 +23,7 @@ console = Console()
 def version() -> None:
     """Print the bb-cli version."""
     from bb import __version__
+
     console.print(f"bb-cli {__version__}")
 
 
@@ -125,6 +126,11 @@ def import_ical(
 
     updated_count = len(deadlines) - new_count
     console.print(f"[green]✔[/green] {new_count} new, {updated_count} already up to date")
+
+    # --- Save URL to config so bb sync can reuse it ---
+    cfg = load_config()
+    if cfg.ical_url != url:
+        save_config(cfg.model_copy(update={"ical_url": url}))
 
     # --- Notify ---
     if new_count > 0:
@@ -269,9 +275,7 @@ def status() -> None:
             deadlines = db._conn.execute("SELECT COUNT(*) FROM deadlines").fetchone()[0]
             announcements = db._conn.execute("SELECT COUNT(*) FROM announcements").fetchone()[0]
             grades = db._conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0]
-            last_sync_row = db._conn.execute(
-                "SELECT MAX(synced_at) FROM sync_log"
-            ).fetchone()
+            last_sync_row = db._conn.execute("SELECT MAX(synced_at) FROM sync_log").fetchone()
             last_sync = last_sync_row[0] if last_sync_row and last_sync_row[0] else "never"
     except sqlite3.OperationalError:
         console.print("[bold]DB:[/bold] not initialized — run bb init")
@@ -281,3 +285,100 @@ def status() -> None:
     console.print(
         f"[bold]DB:[/bold] {deadlines} deadlines, {announcements} announcements, {grades} grades"
     )
+
+
+@app.command()
+def sync() -> None:
+    """Sync deadlines, announcements, and grades from Blackboard."""
+    from bb.adapters.blackboard_ultra import BlackboardUltraAdapter
+    from bb.security.session import SessionError, SessionManager
+    from bb.sync import sync_ical, sync_stream
+
+    cfg = load_config()
+    BB_DIR = _config_module.BB_DIR
+    db_path = BB_DIR / "bb.db"
+    total_new = 0
+
+    # --- Phase 1: iCal ---
+    if cfg.ical_url:
+        console.print("⟳ Phase 1: iCal sync...")
+        try:
+            with Database(db_path) as db:
+                db.setup()
+                new, updated = sync_ical(cfg.ical_url, db)
+                db.log_sync("ical", new, updated)
+            total_new += new
+            console.print(f"[green]✔[/green] {new + updated} deadlines ({new} new)")
+        except Exception as exc:
+            console.print(f"[yellow]⚠[/yellow] iCal sync failed: {exc}")
+    else:
+        console.print("[dim]Phase 1: No iCal URL configured — run bb import-ical <url> first[/dim]")
+
+    # --- Phase 2: Activity Stream ---
+    console.print("⟳ Phase 2: Activity Stream...")
+    sm = SessionManager(BB_DIR / "session.enc")
+    adapter = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm)
+    try:
+        with Database(db_path) as db:
+            db.setup()
+            d_new, a_new, g_new = sync_stream(adapter, db)
+            stream_new = d_new + a_new + g_new
+            db.log_sync("stream", stream_new, 0)
+        total_new += stream_new
+        console.print(
+            f"[green]✔[/green] {d_new} deadlines, {a_new} announcements, {g_new} grades new"
+        )
+    except SessionError:
+        console.print(
+            "[yellow]⚠[/yellow] Session expired. Run [bold]bb auth[/bold] to re-authenticate."
+        )
+        console.print("[dim]↩ Activity Stream skipped — iCal sync only.[/dim]")
+    except Exception as exc:
+        console.print(f"[red]Error:[/red] Activity Stream sync failed: {exc}")
+
+    # --- Notify ---
+    if total_new > 0:
+        label = f"{total_new} new item{'s' if total_new != 1 else ''} synced"
+        notify("bb", label)
+        console.print(f"[blue]🔔[/blue] {label}")
+
+
+@app.command()
+def ann(
+    limit: int = typer.Option(20, "--limit", "-n", help="Number of announcements to show"),
+    unread: bool = typer.Option(False, "--unread", help="Show only unread announcements"),
+) -> None:
+    """Show recent announcements."""
+    BB_DIR = _config_module.BB_DIR
+    with Database(BB_DIR / "bb.db") as db:
+        db.setup()
+        announcements = db.get_recent_announcements(limit=limit)
+
+    if unread:
+        announcements = [a for a in announcements if a.read_at is None]
+
+    if not announcements:
+        msg = "No unread announcements." if unread else "No announcements found."
+        console.print(msg)
+        return
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Course", style="cyan", min_width=8)
+    table.add_column("Announcement", min_width=30)
+    table.add_column("Posted", min_width=10)
+
+    now = datetime.now(timezone.utc)
+    for a in announcements:
+        delta = now - a.posted_at
+        if delta.total_seconds() < 3600:
+            posted_str = f"{int(delta.total_seconds() / 60)}m ago"
+        elif delta.total_seconds() < 86400:
+            posted_str = f"{int(delta.total_seconds() / 3600)}h ago"
+        else:
+            posted_str = f"{delta.days}d ago"
+
+        # Unread announcements shown in bold
+        title_str = f"[bold]{a.title}[/bold]" if a.read_at is None else a.title
+        table.add_row(a.course, title_str, posted_str)
+
+    console.print(table)
