@@ -173,8 +173,8 @@ def test_init_twice_database_still_valid(tmp_path):
     max_version = conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     conn.close()
 
-    assert count == 2  # one row per migration version, not duplicated
-    assert max_version == 2
+    assert count == 3  # one row per migration version, not duplicated
+    assert max_version == 3
 
 
 # ---------------------------------------------------------------------------

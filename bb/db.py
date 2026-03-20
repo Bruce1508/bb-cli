@@ -53,9 +53,19 @@ CREATE TABLE IF NOT EXISTS grades (
 INSERT OR IGNORE INTO schema_version VALUES (2);
 """
 
+MIGRATION_3 = """
+CREATE TABLE IF NOT EXISTS notification_log (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    type     TEXT NOT NULL,
+    sent_at  TEXT NOT NULL
+);
+INSERT OR IGNORE INTO schema_version VALUES (3);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: MIGRATION_1,
     2: MIGRATION_2,
+    3: MIGRATION_3,
 }
 
 
@@ -215,5 +225,29 @@ class Database:
             "INSERT INTO sync_log (synced_at, source, items_new, items_updated, error)"
             " VALUES (?, ?, ?, ?, ?)",
             (datetime.now(timezone.utc).isoformat(), source, items_new, items_updated, error),
+        )
+        self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Notification cooldown
+    # ------------------------------------------------------------------
+
+    def was_notified_recently(self, ntype: str, within_hours: int = 24) -> bool:
+        """Return True if a notification of this type was sent within N hours."""
+        cutoff = (datetime.now(timezone.utc) - timedelta(hours=within_hours)).isoformat()
+        try:
+            row = self._conn.execute(
+                "SELECT 1 FROM notification_log WHERE type=? AND sent_at >= ? LIMIT 1",
+                (ntype, cutoff),
+            ).fetchone()
+        except sqlite3.OperationalError:
+            return False
+        return row is not None
+
+    def log_notification(self, ntype: str) -> None:
+        """Record that a notification of this type was sent now."""
+        self._conn.execute(
+            "INSERT INTO notification_log (type, sent_at) VALUES (?, ?)",
+            (ntype, datetime.now(timezone.utc).isoformat()),
         )
         self._conn.commit()
