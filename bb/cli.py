@@ -562,7 +562,6 @@ def _render_tree(content_tree) -> None:
     """Display full content tree using Rich Tree widget."""
     from rich.tree import Tree as RichTree
 
-
     root = RichTree(
         f"📁 [bold]{content_tree.course_code}[/bold]",
         guide_style="dim",
@@ -642,15 +641,13 @@ def course(
     # 2. Cache decision
     content_tree = None
 
-    if not refresh and cache.is_fresh(course_code):
-        # Cache is fresh — use it
-        content_tree = cache.load_tree(course_code)
-    elif not refresh and (content_tree := cache.load_tree(course_code)) is not None:
-        # Cache exists but is stale — show warning and use already-loaded stale data
-        console.print(
-            f"[dim]Cache is stale. Run [bold]bb course {course_code.upper()} --refresh"
-            "[/bold] to update.[/dim]"
-        )
+    if not refresh and (content_tree := cache.load_tree(course_code)) is not None:
+        # Cache exists — warn if stale, but use it either way
+        if not cache.is_fresh(course_code):
+            console.print(
+                f"[dim]Cache is stale. Run [bold]bb course {course_code.upper()} --refresh"
+                "[/bold] to update.[/dim]"
+            )
     else:
         # No cache or --refresh requested — scrape
         console.print(f"[dim]⟳ Scraping {course_code.upper()} content...[/dim]")
