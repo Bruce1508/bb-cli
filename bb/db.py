@@ -72,11 +72,25 @@ CREATE TABLE IF NOT EXISTS course_map (
 INSERT OR IGNORE INTO schema_version VALUES (4);
 """
 
+MIGRATION_5 = """
+CREATE TABLE IF NOT EXISTS downloads (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    course       TEXT NOT NULL,
+    filename     TEXT NOT NULL,
+    path         TEXT NOT NULL,
+    size_bytes   INTEGER,
+    downloaded_at TEXT NOT NULL,
+    UNIQUE(course, filename)
+);
+INSERT OR IGNORE INTO schema_version VALUES (5);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: MIGRATION_1,
     2: MIGRATION_2,
     3: MIGRATION_3,
     4: MIGRATION_4,
+    5: MIGRATION_5,
 }
 
 
@@ -292,3 +306,47 @@ class Database:
             (course_code.upper(),),
         ).fetchone()
         return row[0] if row else None
+
+    # ------------------------------------------------------------------
+    # Downloads
+    # ------------------------------------------------------------------
+
+    def record_download(
+        self,
+        course: str,
+        filename: str,
+        path: str,
+        size_bytes: int,
+    ) -> None:
+        """INSERT OR REPLACE into downloads. course stored as UPPER(course)."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO downloads (course, filename, path, size_bytes, downloaded_at)"
+            " VALUES (UPPER(?), ?, ?, ?, ?)",
+            (course, filename, path, size_bytes, datetime.now(timezone.utc).isoformat()),
+        )
+        self._conn.commit()
+
+    def get_downloads(self, course: str | None = None) -> list[dict]:
+        """Return downloads, optionally filtered by course (case-insensitive)."""
+        if course:
+            rows = self._conn.execute(
+                "SELECT course, filename, path, size_bytes, downloaded_at"
+                " FROM downloads WHERE UPPER(course) = UPPER(?)"
+                " ORDER BY downloaded_at DESC",
+                (course,),
+            ).fetchall()
+        else:
+            rows = self._conn.execute(
+                "SELECT course, filename, path, size_bytes, downloaded_at"
+                " FROM downloads ORDER BY downloaded_at DESC"
+            ).fetchall()
+        return [
+            {
+                "course": r[0],
+                "filename": r[1],
+                "path": r[2],
+                "size_bytes": r[3],
+                "downloaded_at": r[4],
+            }
+            for r in rows
+        ]
