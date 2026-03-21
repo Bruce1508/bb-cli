@@ -62,10 +62,21 @@ CREATE TABLE IF NOT EXISTS notification_log (
 INSERT OR IGNORE INTO schema_version VALUES (3);
 """
 
+MIGRATION_4 = """
+CREATE TABLE IF NOT EXISTS course_map (
+    course_code  TEXT PRIMARY KEY,
+    bb_id        TEXT NOT NULL,
+    display_name TEXT NOT NULL DEFAULT '',
+    updated_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+INSERT OR IGNORE INTO schema_version VALUES (4);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: MIGRATION_1,
     2: MIGRATION_2,
     3: MIGRATION_3,
+    4: MIGRATION_4,
 }
 
 
@@ -251,3 +262,33 @@ class Database:
             (ntype, datetime.now(timezone.utc).isoformat()),
         )
         self._conn.commit()
+
+    # ------------------------------------------------------------------
+    # Course map
+    # ------------------------------------------------------------------
+
+    def upsert_course_map(
+        self,
+        course_code: str,
+        bb_id: str,
+        display_name: str = "",
+    ) -> None:
+        """Save or update course_code → bb_id mapping."""
+        self._conn.execute(
+            """INSERT INTO course_map (course_code, bb_id, display_name, updated_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(course_code) DO UPDATE SET
+                   bb_id=excluded.bb_id,
+                   display_name=excluded.display_name,
+                   updated_at=excluded.updated_at""",
+            (course_code.upper(), bb_id, display_name, datetime.now(timezone.utc).isoformat()),
+        )
+        self._conn.commit()
+
+    def get_course_bb_id(self, course_code: str) -> str | None:
+        """Return Blackboard internal ID for a course code, or None if not found."""
+        row = self._conn.execute(
+            "SELECT bb_id FROM course_map WHERE course_code = ?",
+            (course_code.upper(),),
+        ).fetchone()
+        return row[0] if row else None
