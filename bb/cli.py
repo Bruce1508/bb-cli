@@ -732,6 +732,15 @@ def download(
 
     candidates = _collect_downloadable(tree.items)
 
+    # Require --all or item_name
+    if not all_files and not item_name:
+        console.print(
+            "[yellow]Specify [bold]--all[/bold] to download everything, "
+            "[bold]--type pdf[/bold] to filter by type, "
+            "or provide an item name.[/yellow]"
+        )
+        raise typer.Exit(0)
+
     # Apply --type filter: extension-first, mime_type fallback
     if file_type:
         ft = file_type.lower()
@@ -815,7 +824,8 @@ def open_item(
     if not matches:
         console.print(f"[yellow]No item matching '[bold]{item_name}[/bold]' found.[/yellow]")
         console.print("Available items:")
-        for item in tree.items:
+        all_items = _find_items_by_title(tree.items, "")  # empty string matches everything
+        for item in all_items:
             console.print(f"  • {item.title}")
         raise typer.Exit(1)
 

@@ -183,6 +183,19 @@ def test_download_type_pdf_only_downloads_pdf(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def test_download_no_args_exits_without_downloading(tmp_path):
+    """Running bb download BTP200 with no --all or item name should exit 0 with hint."""
+    with patch("bb.config.BB_DIR", tmp_path):
+        save_tree(_make_tree([_pdf_item()]))
+    with (
+        patch("bb.config.BB_DIR", tmp_path),
+        patch("bb.cli.Downloader") as mock_dl_cls,
+    ):
+        result = runner.invoke(app, ["download", "BTP200"])
+    mock_dl_cls.assert_not_called()
+    assert result.exit_code == 0
+
+
 def test_download_by_name_downloads_matching_item(tmp_path):
     items = [_pdf_item("Tentative Syllabus"), _pdf_item("Lab 1")]
     with patch("bb.config.BB_DIR", tmp_path):
