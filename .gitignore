@@ -15,3 +15,7 @@ uv.lock
 # Keep internal docs/plans private — only CLAUDE.md is public
 *.md
 !CLAUDE.md
+
+# NEVER commit internal planning docs — specs, plans, brainstorming notes
+docs/
+tasks/
