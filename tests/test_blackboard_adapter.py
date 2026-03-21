@@ -223,6 +223,8 @@ def test_fetch_course_content_raises_without_session():
     """fetch_course_content now requires two args and a valid session."""
     from bb.security.session import SessionError
 
-    adapter = _make_adapter()
-    with pytest.raises((SessionError, Exception)):
+    sm = MagicMock(spec=SessionManager)
+    sm.decrypt_session.side_effect = SessionError("No session file")
+    adapter = BlackboardUltraAdapter(lms_url="https://learn.example.com", session_manager=sm)
+    with pytest.raises(SessionError):
         adapter.fetch_course_content("BTI325", "_773522_1")

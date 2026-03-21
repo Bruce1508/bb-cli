@@ -27,6 +27,7 @@ def _make_adapter(name: str = "test_adapter") -> type[LMSAdapter]:
         def check_session(self) -> str: return "fresh"
         def fetch_activity_stream(self): return []
         def fetch_grades(self): return []
+        def fetch_course_list(self): return []
         def fetch_course_content(self, course_id: str): return {}
     _Adapter.__name__ = name
     return _Adapter

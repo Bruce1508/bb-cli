@@ -25,7 +25,14 @@ def test_lms_adapter_cannot_be_instantiated():
 
 
 def test_all_abstract_methods_declared():
-    expected = {"authenticate", "check_session", "fetch_activity_stream", "fetch_grades", "fetch_course_content"}
+    expected = {
+        "authenticate",
+        "check_session",
+        "fetch_activity_stream",
+        "fetch_grades",
+        "fetch_course_list",
+        "fetch_course_content",
+    }
     assert LMSAdapter.__abstractmethods__ == expected
 
 
@@ -47,6 +54,7 @@ def test_concrete_adapter_with_all_methods_can_be_instantiated():
         def check_session(self) -> str: return "fresh"
         def fetch_activity_stream(self): return []
         def fetch_grades(self): return []
+        def fetch_course_list(self): return []
         def fetch_course_content(self, course_id: str): return {}
 
     adapter = FullAdapter()  # must not raise
@@ -59,6 +67,7 @@ def test_check_session_returns_valid_status_string():
         def check_session(self) -> str: return "fresh"
         def fetch_activity_stream(self): return []
         def fetch_grades(self): return []
+        def fetch_course_list(self): return []
         def fetch_course_content(self, course_id: str): return {}
 
     adapter = FullAdapter()

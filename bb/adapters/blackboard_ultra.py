@@ -3,8 +3,12 @@ from __future__ import annotations
 import tomllib
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from rich.console import Console
+
+if TYPE_CHECKING:
+    from bb.models.content import ContentTree
 
 from bb.adapters.base import Announcement, Deadline, GradeItem, LMSAdapter
 from bb.adapters.registry import register
@@ -238,6 +242,7 @@ class BlackboardUltraAdapter(LMSAdapter):
           /ultra/courses/_773522_1/outline → bb_id = "_773522_1"
         """
         import re as _re
+
         from playwright.sync_api import sync_playwright
 
         state = self._sm.decrypt_session()  # raises SessionError if missing/corrupt
@@ -247,36 +252,40 @@ class BlackboardUltraAdapter(LMSAdapter):
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(storage_state=state)
             page = context.new_page()
+            try:
+                page.goto(f"{self._lms_url}/ultra/institution-page")
+                page.wait_for_selector(
+                    sel.get("item", "bb-base-courses-list-item"),
+                    timeout=15_000,
+                )
 
-            page.goto(f"{self._lms_url}/ultra/institution-page")
-            page.wait_for_selector(
-                sel.get("item", "bb-base-courses-list-item"),
-                timeout=15_000,
-            )
-
-            courses = []
-            for el in page.query_selector_all(sel.get("item", "bb-base-courses-list-item")):
-                link = el.query_selector(sel.get("link", "a[href*='/ultra/courses/']"))
-                if not link:
-                    continue
-                href = link.get_attribute("href") or ""
-                # Extract "_773522_1" from "/ultra/courses/_773522_1/outline"
-                # Use re to match _<digits>_<digits> pattern — do not assume ending in "_1"
-                parts = [seg for seg in href.split("/") if _re.match(r"^_\d+_\d+$", seg)]
-                if not parts:
-                    continue
-                bb_id = parts[0]
-                name_el = el.query_selector(sel.get("name", ".course-name"))
-                name = name_el.inner_text().strip() if name_el else ""
-                # Course code: prefer data attribute, fallback to first word of name
-                code_el = el.query_selector(sel.get("code", "[data-course-id]"))
-                code = (code_el.get_attribute("data-course-id") or "").upper() if code_el else ""
-                if not code:
-                    first = name.split()[0] if name else ""
-                    code = first.upper() if (first and len(first) <= 8) else bb_id
-                courses.append({"code": code, "bb_id": bb_id, "name": name})
-
-            browser.close()
+                courses = []
+                for el in page.query_selector_all(sel.get("item", "bb-base-courses-list-item")):
+                    link = el.query_selector(sel.get("link", "a[href*='/ultra/courses/']"))
+                    if not link:
+                        continue
+                    href = link.get_attribute("href") or ""
+                    # Extract "_773522_1" from "/ultra/courses/_773522_1/outline"
+                    # Use re to match _<digits>_<digits> pattern — do not assume ending in "_1"
+                    parts = [seg for seg in href.split("/") if _re.match(r"^_\d+_\d+$", seg)]
+                    if not parts:
+                        continue
+                    bb_id = parts[0]
+                    name_el = el.query_selector(sel.get("name", ".course-name"))
+                    name = name_el.inner_text().strip() if name_el else ""
+                    # Course code: prefer data attribute, fallback to first word of name
+                    code_el = el.query_selector(sel.get("code", "[data-course-id]"))
+                    code = (
+                        (code_el.get_attribute("data-course-id") or "").upper()
+                        if code_el
+                        else ""
+                    )
+                    if not code:
+                        first = name.split()[0] if name else ""
+                        code = first.upper() if (first and len(first) <= 8) else bb_id
+                    courses.append({"code": code, "bb_id": bb_id, "name": name})
+            finally:
+                browser.close()
         return courses
 
     def fetch_course_content(self, course_code: str, course_bb_id: str) -> "ContentTree":
@@ -289,8 +298,10 @@ class BlackboardUltraAdapter(LMSAdapter):
         Circuit breaker: max 200 items total, max depth 5.
         On individual item failure: skip + continue (never crash full scrape).
         """
-        from playwright.sync_api import sync_playwright
         from datetime import datetime, timezone
+
+        from playwright.sync_api import sync_playwright
+
         from bb.models.content import ContentTree
 
         state = self._sm.decrypt_session()  # raises SessionError if missing/corrupt
@@ -300,22 +311,23 @@ class BlackboardUltraAdapter(LMSAdapter):
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(storage_state=state)
             page = context.new_page()
+            try:
+                url = f"{self._lms_url}/ultra/courses/{course_bb_id}/outline"
+                page.goto(url)
+                page.wait_for_selector(
+                    sel.get("content_list", "[data-testid='course-content-list']"),
+                    timeout=20_000,
+                )
 
-            url = f"{self._lms_url}/ultra/courses/{course_bb_id}/outline"
-            page.goto(url)
-            page.wait_for_selector(
-                sel.get("content_list", "[data-testid='course-content-list']"),
-                timeout=20_000,
-            )
-
-            counter = {"total": 0}
-            items = _scrape_content_level(page, page, sel, depth=0, counter=counter)
-            browser.close()
+                counter = {"total": 0}
+                items = _scrape_content_level(page, page, sel, depth=0, counter=counter)
+            finally:
+                browser.close()
 
         return ContentTree(
             course_code=course_code.upper(),
             course_bb_id=course_bb_id,
-            scraped_at=datetime.now(timezone.utc),   # datetime object — serialized in content_tree_to_dict
+            scraped_at=datetime.now(timezone.utc),  # serialized in content_tree_to_dict
             items=items,
         )
 
