@@ -279,7 +279,7 @@ def read_file_content(course: str, filename: str) -> dict:
     if not files_dir.exists():
         return {"error": "file not found"}
     match = next(
-        (f for f in files_dir.iterdir() if filename.lower() in f.name.lower()),
+        (f for f in files_dir.iterdir() if f.is_file() and filename.lower() in f.name.lower()),
         None,
     )
     if match is None:
