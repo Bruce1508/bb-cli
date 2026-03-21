@@ -324,6 +324,21 @@ def sync(
     db_path = BB_DIR / "bb.db"
     total_new = 0
 
+    # --- Phase 0: Build course map (skipped if --ical-only) ---
+    if not ical_only:
+        console.print("⟳ Phase 0: Discovering courses...")
+        try:
+            sm0 = SessionManager(BB_DIR / "session.enc")
+            adapter0 = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm0)
+            course_list = adapter0.fetch_course_list()
+            with Database(db_path) as db:
+                db.setup()
+                for c in course_list:
+                    db.upsert_course_map(c["code"], c["bb_id"], c["name"])
+            console.print(f"[green]✔[/green] {len(course_list)} courses mapped")
+        except Exception as exc:
+            console.print(f"[yellow]⚠[/yellow] Course discovery failed: {exc} (sync continues)")
+
     # --- Phase 1: iCal ---
     if cfg.ical_url:
         console.print("⟳ Phase 1: iCal sync...")
@@ -541,3 +556,127 @@ def ann(
         table.add_row(a.course, title_str, posted_str)
 
     console.print(table)
+
+
+def _render_tree(content_tree) -> None:
+    """Display full content tree using Rich Tree widget."""
+    from rich.tree import Tree as RichTree
+
+
+    root = RichTree(
+        f"📁 [bold]{content_tree.course_code}[/bold]",
+        guide_style="dim",
+    )
+    for item in content_tree.items:
+        _add_tree_node(root, item)
+    console.print(root)
+
+
+def _add_tree_node(parent, item) -> None:
+    from bb.models.content import TYPE_ICONS
+
+    icon = TYPE_ICONS.get(item.type, "📄")
+    label = f"{icon} {item.title}"
+    if item.children:
+        label += f"  [dim]({len(item.children)} items)[/dim]"
+    node = parent.add(label)
+    for child in item.children:
+        _add_tree_node(node, child)
+
+
+def _render_table(content_tree) -> None:
+    """Display top-level content items as a Rich table (default view)."""
+    from rich.table import Table as _Table
+
+    from bb.models.content import TYPE_ICONS
+
+    table = _Table(
+        title=f"📁 {content_tree.course_code}",
+        show_header=True,
+        header_style="bold",
+    )
+    table.add_column("#", style="dim", width=4)
+    table.add_column("Type", width=6)
+    table.add_column("Title")
+    table.add_column("Items", justify="right", style="dim")
+
+    for i, item in enumerate(content_tree.items, start=1):
+        icon = TYPE_ICONS.get(item.type, "📄")
+        child_count = str(len(item.children)) if item.children else ""
+        table.add_row(str(i), icon, item.title, child_count)
+
+    console.print(table)
+    console.print(
+        f"[dim]Scraped: {content_tree.scraped_at.date()}  "
+        "Use [bold]--tree[/bold] for full view.[/dim]"
+    )
+
+
+@app.command()
+def course(
+    course_code: str = typer.Argument(..., help="Course code, e.g. BTP200"),
+    tree: bool = typer.Option(False, "--tree", help="Show full content tree"),
+    refresh: bool = typer.Option(False, "--refresh", help="Force re-scrape"),
+) -> None:
+    """Browse course content."""
+    import bb.cache as cache
+    from bb.adapters.blackboard_ultra import BlackboardUltraAdapter
+    from bb.security.session import SessionManager
+
+    cfg = load_config()
+    BB_DIR = _config_module.BB_DIR
+    db_path = BB_DIR / "bb.db"
+
+    # 1. Lookup bb_id
+    with Database(db_path) as db:
+        db.setup()
+        bb_id = db.get_course_bb_id(course_code.upper())
+
+    if not bb_id:
+        console.print(
+            f"[yellow]⚠[/yellow] Course [bold]{course_code.upper()}[/bold] not found. "
+            "Run [bold]bb sync[/bold] first to discover courses."
+        )
+        raise typer.Exit(1)
+
+    # 2. Cache decision
+    content_tree = None
+
+    if not refresh and cache.is_fresh(course_code):
+        # Cache is fresh — use it
+        content_tree = cache.load_tree(course_code)
+    elif not refresh and (content_tree := cache.load_tree(course_code)) is not None:
+        # Cache exists but is stale — show warning and use already-loaded stale data
+        console.print(
+            f"[dim]Cache is stale. Run [bold]bb course {course_code.upper()} --refresh"
+            "[/bold] to update.[/dim]"
+        )
+    else:
+        # No cache or --refresh requested — scrape
+        console.print(f"[dim]⟳ Scraping {course_code.upper()} content...[/dim]")
+        sm = SessionManager(BB_DIR / "session.enc")
+        adapter = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm)
+        content_tree = adapter.fetch_course_content(course_code.upper(), bb_id)
+        cache.save_tree(content_tree)
+
+    # 3. Display
+    if tree:
+        _render_tree(content_tree)
+    else:
+        _render_table(content_tree)
+
+
+@app.command()
+def cache_clear(
+    course_code: Optional[str] = typer.Argument(None, help="Course to clear (default: all)"),
+) -> None:
+    """Clear cached course content."""
+    import bb.cache as cache
+
+    count = cache.clear(course_code)
+    if count == 0:
+        console.print("[dim]No cache to clear.[/dim]")
+    elif course_code:
+        console.print(f"[green]✔[/green] Cleared cache for {course_code.upper()}.")
+    else:
+        console.print(f"[green]✔[/green] Cleared cache for {count} course(s).")
