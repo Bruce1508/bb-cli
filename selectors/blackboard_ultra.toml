@@ -54,3 +54,17 @@ content_item = "[data-testid='content-item']"
 content_item_fallback = ".content-list-item"
 file_link = "[data-testid='file-attachment-link']"
 file_link_fallback = "a[href*='/bbcswebdav/']"
+# New keys added Day 8:
+content_item_title          = ".content-title"
+content_item_title_fallback = "[data-testid='content-item-title']"
+expand_button               = "[data-testid='content-item-expand']"
+expand_button_fallback      = ".expand-btn"
+
+[courses]
+# My Courses / institution page
+item              = "bb-base-courses-list-item"
+item_fallback     = ".course-list-item"
+name              = ".course-name"
+name_fallback     = "[data-testid='course-name']"
+link              = "a[href*='/ultra/courses/']"
+code              = "[data-course-id]"

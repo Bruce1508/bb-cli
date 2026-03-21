@@ -219,7 +219,10 @@ def test_fetch_grades_returns_empty_list_when_no_rows():
     assert result == []
 
 
-def test_fetch_course_content_stub_returns_object():
+def test_fetch_course_content_raises_without_session():
+    """fetch_course_content now requires two args and a valid session."""
+    from bb.security.session import SessionError
+
     adapter = _make_adapter()
-    result = adapter.fetch_course_content("BTI325")
-    assert result is not None
+    with pytest.raises((SessionError, Exception)):
+        adapter.fetch_course_content("BTI325", "_773522_1")

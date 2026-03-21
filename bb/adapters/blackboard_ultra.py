@@ -230,9 +230,94 @@ class BlackboardUltraAdapter(LMSAdapter):
             status=status,
         )
 
-    def fetch_course_content(self, course_id: str) -> object:
-        """Stub — implemented Day 8."""
-        return {}
+    def fetch_course_list(self) -> list[dict]:
+        """Scrape My Courses page → list of {code, bb_id, name}.
+
+        URL pattern: /ultra/institution-page
+        Extracts internal Blackboard ID from href:
+          /ultra/courses/_773522_1/outline → bb_id = "_773522_1"
+        """
+        import re as _re
+        from playwright.sync_api import sync_playwright
+
+        state = self._sm.decrypt_session()  # raises SessionError if missing/corrupt
+        sel = self._selectors.get("courses", {})
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(storage_state=state)
+            page = context.new_page()
+
+            page.goto(f"{self._lms_url}/ultra/institution-page")
+            page.wait_for_selector(
+                sel.get("item", "bb-base-courses-list-item"),
+                timeout=15_000,
+            )
+
+            courses = []
+            for el in page.query_selector_all(sel.get("item", "bb-base-courses-list-item")):
+                link = el.query_selector(sel.get("link", "a[href*='/ultra/courses/']"))
+                if not link:
+                    continue
+                href = link.get_attribute("href") or ""
+                # Extract "_773522_1" from "/ultra/courses/_773522_1/outline"
+                # Use re to match _<digits>_<digits> pattern — do not assume ending in "_1"
+                parts = [seg for seg in href.split("/") if _re.match(r"^_\d+_\d+$", seg)]
+                if not parts:
+                    continue
+                bb_id = parts[0]
+                name_el = el.query_selector(sel.get("name", ".course-name"))
+                name = name_el.inner_text().strip() if name_el else ""
+                # Course code: prefer data attribute, fallback to first word of name
+                code_el = el.query_selector(sel.get("code", "[data-course-id]"))
+                code = (code_el.get_attribute("data-course-id") or "").upper() if code_el else ""
+                if not code:
+                    first = name.split()[0] if name else ""
+                    code = first.upper() if (first and len(first) <= 8) else bb_id
+                courses.append({"code": code, "bb_id": bb_id, "name": name})
+
+            browser.close()
+        return courses
+
+    def fetch_course_content(self, course_code: str, course_bb_id: str) -> "ContentTree":
+        """DFS scrape of course outline page → ContentTree.
+
+        Args:
+            course_code:   Human-readable code e.g. "BTP200" (stored in ContentTree)
+            course_bb_id:  Blackboard internal ID e.g. "_773522_1" (used in URL)
+
+        Circuit breaker: max 200 items total, max depth 5.
+        On individual item failure: skip + continue (never crash full scrape).
+        """
+        from playwright.sync_api import sync_playwright
+        from datetime import datetime, timezone
+        from bb.models.content import ContentTree
+
+        state = self._sm.decrypt_session()  # raises SessionError if missing/corrupt
+        sel = self._selectors.get("course_content", {})
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(storage_state=state)
+            page = context.new_page()
+
+            url = f"{self._lms_url}/ultra/courses/{course_bb_id}/outline"
+            page.goto(url)
+            page.wait_for_selector(
+                sel.get("content_list", "[data-testid='course-content-list']"),
+                timeout=20_000,
+            )
+
+            counter = {"total": 0}
+            items = _scrape_content_level(page, page, sel, depth=0, counter=counter)
+            browser.close()
+
+        return ContentTree(
+            course_code=course_code.upper(),
+            course_bb_id=course_bb_id,
+            scraped_at=datetime.now(timezone.utc),   # datetime object — serialized in content_tree_to_dict
+            items=items,
+        )
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -349,3 +434,117 @@ def _parse_float(text: str) -> float | None:
         return float(text.replace(",", ".").strip())
     except (ValueError, AttributeError):
         return None
+
+
+MAX_ITEMS = 200
+MAX_DEPTH = 5
+
+
+def _parse_content_item(el, sel: dict):
+    """Parse one content element → ContentItem.
+
+    Module-level helper — called by _scrape_content_level.
+    """
+    from bb.models.content import ContentItem
+
+    title_el = el.query_selector(sel.get("content_item_title", ".content-title"))
+    title = title_el.inner_text().strip() if title_el else "Untitled"
+
+    # Detect type from data attribute, then CSS class keywords
+    item_type = "file"  # default
+    type_attr = el.get_attribute("data-content-type") or ""
+    class_attr = el.get_attribute("class") or ""
+
+    if type_attr:
+        item_type = type_attr.lower()
+    elif "module" in class_attr or "folder" in class_attr:
+        item_type = "module"
+    elif "discussion" in class_attr:
+        item_type = "discussion"
+    elif "link" in class_attr or "externalLink" in class_attr:
+        item_type = "link"
+    elif "assignment" in class_attr or "assessment" in class_attr:
+        item_type = "assignment"
+
+    # Download URL — follow existing two-selector resilience pattern
+    file_sel = sel.get("file_link", "[data-testid='file-attachment-link']")
+    file_sel_fb = sel.get("file_link_fallback", "a[href*='/bbcswebdav/']")
+    link_el = el.query_selector(file_sel) or el.query_selector(file_sel_fb)
+    download_url = link_el.get_attribute("href") if link_el else None
+
+    # View URL
+    view_el = el.query_selector("a[href*='/ultra/']")
+    url = view_el.get_attribute("href") if view_el else None
+
+    return ContentItem(
+        type=item_type,
+        title=title,
+        url=url,
+        download_url=download_url,
+    )
+
+
+def _scrape_content_level(
+    root,           # page OR ElementHandle — both support .query_selector_all()
+    page,           # always the Page object — needed for wait_for_timeout()
+    sel: dict,
+    depth: int,
+    counter: dict,
+) -> list:
+    """DFS scrape of one level of content items, recursing into modules/folders.
+
+    Module-level helper — called by BlackboardUltraAdapter.fetch_course_content.
+
+    Args:
+        root:    The DOM root to query — Page on first call, ElementHandle on recursion.
+                 Both Page and ElementHandle support .query_selector_all() in Playwright.
+        page:    Always the top-level Page object (needed for wait_for_timeout).
+        sel:     Selector dict from blackboard_ultra.toml [course_content] section.
+        depth:   Current recursion depth (0 = top-level).
+        counter: Mutable dict {"total": int} — shared across all recursion levels.
+
+    Returns list[ContentItem].
+    """
+    if depth >= MAX_DEPTH or counter["total"] >= MAX_ITEMS:
+        return []
+
+    items = []
+    elements = root.query_selector_all(
+        sel.get("content_item", "[data-testid='content-item']")
+    )
+
+    for el in elements:
+        if counter["total"] >= MAX_ITEMS:
+            break
+        try:
+            item = _parse_content_item(el, sel)
+        except Exception:
+            continue  # Skip unparseable items — never crash full scrape
+
+        counter["total"] += 1
+
+        if item.type in ("module", "folder"):
+            # Try to expand collapsed module/folder
+            expand_btn = el.query_selector(
+                sel.get("expand_button", "[data-testid='content-item-expand']")
+            )
+            if expand_btn:
+                try:
+                    expand_btn.click()
+                    page.wait_for_timeout(800)  # wait for children to render in DOM
+                except Exception:
+                    pass
+
+            # Recurse into nested content list, scoped to this element
+            nested = el.query_selector(
+                sel.get("content_list", "[data-testid='course-content-list']")
+            )
+            if nested:
+                # Pass `nested` (ElementHandle) as root — scopes query to this subtree
+                item.children = _scrape_content_level(
+                    nested, page, sel, depth + 1, counter
+                )
+
+        items.append(item)
+
+    return items
