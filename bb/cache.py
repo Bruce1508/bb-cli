@@ -66,5 +66,9 @@ def clear(course_code: str | None = None) -> int:
         tree_file = course_dir / "tree.json"
         if tree_file.exists():
             tree_file.unlink()
+            try:
+                course_dir.rmdir()  # remove now-empty directory
+            except OSError:
+                pass  # directory not empty (other files present) — skip
             count += 1
     return count
