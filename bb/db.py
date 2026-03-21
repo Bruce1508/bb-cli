@@ -316,7 +316,7 @@ class Database:
         course: str,
         filename: str,
         path: str,
-        size_bytes: int,
+        size_bytes: int | None,
     ) -> None:
         """INSERT OR REPLACE into downloads. course stored as UPPER(course)."""
         self._conn.execute(

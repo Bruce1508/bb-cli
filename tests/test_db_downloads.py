@@ -84,3 +84,11 @@ def test_get_downloads_returns_dict_with_required_keys(tmp_path):
         db.record_download("BTP200", "a.pdf", "/a", 100)
         result = db.get_downloads()
     assert set(result[0].keys()) == {"course", "filename", "path", "size_bytes", "downloaded_at"}
+
+
+def test_record_download_accepts_none_size(tmp_path):
+    with Database(tmp_path / "bb.db") as db:
+        db.setup()
+        db.record_download("BTP200", "nosize.pdf", "/tmp/nosize.pdf", None)
+        row = db._conn.execute("SELECT size_bytes FROM downloads").fetchone()
+    assert row[0] is None
