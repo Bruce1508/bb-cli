@@ -196,10 +196,9 @@ def search_content(query: str, course: str | None = None) -> list[dict]:
     """
     import json
 
-    import bb.config as _cfg_module
     from bb.models.content import content_tree_from_dict
 
-    cache_dir = _cfg_module.BB_DIR / "cache"  # resolved at call time, not import time
+    cache_dir = _config_module.BB_DIR / "cache"  # resolved at call time, not import time
     results: list[dict] = []
     query_lower = query.lower()
 
