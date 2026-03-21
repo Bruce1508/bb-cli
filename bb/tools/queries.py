@@ -9,6 +9,8 @@ Each function:
 
 from __future__ import annotations
 
+import pdfplumber
+
 import bb.config as _config_module
 from bb.db import Database
 
@@ -236,3 +238,66 @@ def _search_items(items: list, course_code: str, query: str, results: list) -> N
             )
         if item.children:
             _search_items(item.children, course_code, query, results)
+
+
+def list_downloaded_files(course: str | None = None) -> list[dict]:
+    """Return files already downloaded to ~/.bb/files/.
+
+    Use when student asks 'what files do I have?', 'show my downloaded materials',
+    or before read_file_content to confirm a file exists.
+
+    Args:
+        course: Optional course code filter. Case-insensitive.
+    """
+    BB_DIR = _config_module.BB_DIR
+    try:
+        with Database(BB_DIR / "bb.db") as db:
+            db.setup()
+            return db.get_downloads(course=course)
+    except Exception:
+        return []
+
+
+def read_file_content(course: str, filename: str) -> dict:
+    """Extract text content from a downloaded PDF file.
+
+    Use when student asks to summarize, explain, or quote from a specific course file.
+    Returns the full text (capped at 8000 chars to fit LLM context).
+
+    Args:
+        course: Course code (e.g. 'BTP200').
+        filename: Exact or partial filename. Case-insensitive substring match.
+
+    Returns:
+        {"filename", "course", "text", "pages", "char_count", "truncated"}
+        {"error": "file not found"} if no match
+        {"error": "not a PDF"} if file extension is not .pdf
+        {"error": "unreadable: <reason>"} if pdfplumber fails
+    """
+    BB_DIR = _config_module.BB_DIR
+    files_dir = BB_DIR / "files" / course.upper()
+    if not files_dir.exists():
+        return {"error": "file not found"}
+    match = next(
+        (f for f in files_dir.iterdir() if filename.lower() in f.name.lower()),
+        None,
+    )
+    if match is None:
+        return {"error": "file not found"}
+    if match.suffix.lower() != ".pdf":
+        return {"error": "not a PDF"}
+    try:
+        with pdfplumber.open(match) as pdf:
+            page_count = len(pdf.pages)
+            text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+    except Exception as e:
+        return {"error": f"unreadable: {e}"}
+    truncated = len(text) > 8000
+    return {
+        "filename": match.name,
+        "course": course.upper(),
+        "text": text[:8000],
+        "pages": page_count,
+        "char_count": len(text),
+        "truncated": truncated,
+    }

@@ -12,6 +12,8 @@ from bb.tools.queries import (
     get_grades,
     get_sync_status,
     get_upcoming_deadlines,
+    list_downloaded_files,
+    read_file_content,
     search_content,
 )
 
@@ -23,4 +25,6 @@ TOOL_REGISTRY: dict[str, object] = {
     "get_sync_status": get_sync_status,
     "get_course_content": get_course_content,
     "search_content": search_content,
+    "list_downloaded_files": list_downloaded_files,
+    "read_file_content": read_file_content,
 }
