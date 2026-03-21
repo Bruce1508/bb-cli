@@ -164,6 +164,4 @@ def test_download_uses_get_method(tmp_path):
     mock_client = _make_mock_client()
     with patch("bb.downloader.httpx.Client", return_value=mock_client):
         d.download("https://example.com/file.pdf", tmp_path, "file.pdf")
-    mock_client.stream.assert_called_once()
-    call_args = mock_client.stream.call_args
-    assert call_args[0][0] == "GET"
+    mock_client.stream.assert_called_once_with("GET", "https://example.com/file.pdf")

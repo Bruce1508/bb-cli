@@ -51,21 +51,17 @@ class Downloader:
             ) as client:
                 with client.stream("GET", url) as response:
                     response.raise_for_status()
-                    content_length = int(response.headers.get("content-length", 0))
-                    if content_length > LARGE_FILE_BYTES:
-                        import typer
-
-                        mb = content_length / (1024 * 1024)
-                        if not typer.confirm(f"  File is {mb:.1f} MB. Download?", default=True):
-                            raise DownloadError("Skipped by user (large file)")
                     with open(dest_path, "wb") as f:
                         for chunk in response.iter_bytes():
                             f.write(chunk)
         except httpx.HTTPStatusError as e:
+            dest_path.unlink(missing_ok=True)
             raise DownloadError(f"HTTP {e.response.status_code}") from e
         except httpx.TimeoutException as e:
+            dest_path.unlink(missing_ok=True)
             raise DownloadError("Timeout") from e
         except httpx.RequestError as e:
+            dest_path.unlink(missing_ok=True)
             raise DownloadError(str(e)) from e
         return dest_path
 
