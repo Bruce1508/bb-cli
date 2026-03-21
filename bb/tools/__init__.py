@@ -7,10 +7,12 @@ available tools and expose them to the LLM.
 
 from bb.tools.queries import (
     get_announcements,
+    get_course_content,
     get_course_list,
     get_grades,
     get_sync_status,
     get_upcoming_deadlines,
+    search_content,
 )
 
 TOOL_REGISTRY: dict[str, object] = {
@@ -19,4 +21,6 @@ TOOL_REGISTRY: dict[str, object] = {
     "get_announcements": get_announcements,
     "get_course_list": get_course_list,
     "get_sync_status": get_sync_status,
+    "get_course_content": get_course_content,
+    "search_content": search_content,
 }

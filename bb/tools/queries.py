@@ -160,3 +160,80 @@ def get_sync_status() -> dict:
         "announcements": announcements,
         "grades": grades,
     }
+
+
+def get_course_content(course: str) -> dict:
+    """Return cached content tree for a course as a serializable dict.
+
+    Use this to answer questions like:
+    - 'what files are in BTP200?'
+    - 'does BTI325 have lecture slides?'
+    - 'list all materials for OOP244'
+
+    Returns empty dict if course not cached — in that case suggest:
+    'Run bb course <COURSE> to browse and cache the content first.'
+    """
+    from bb.cache import load_tree
+    from bb.models.content import content_tree_to_dict
+
+    tree = load_tree(course.upper())
+    if tree is None:
+        return {}
+    return content_tree_to_dict(tree)
+
+
+def search_content(query: str, course: str | None = None) -> list[dict]:
+    """Search for content items matching query across all cached course trees.
+
+    Use this when student asks:
+    - 'find the syllabus'
+    - 'where is the zoom link'
+    - 'which course has lecture recordings'
+
+    Simple substring match on title (case-insensitive).
+    Returns list of {course, title, type, url} dicts.
+    Set course= to restrict search to one course.
+    """
+    import json
+
+    import bb.config as _cfg_module
+    from bb.models.content import content_tree_from_dict
+
+    cache_dir = _cfg_module.BB_DIR / "cache"  # resolved at call time, not import time
+    results: list[dict] = []
+    query_lower = query.lower()
+
+    if course:
+        dirs = [cache_dir / course.upper()]
+    else:
+        dirs = list(cache_dir.iterdir()) if cache_dir.exists() else []
+
+    for course_dir in dirs:
+        if not course_dir.is_dir():
+            continue
+        tree_file = course_dir / "tree.json"
+        if not tree_file.exists():
+            continue
+        try:
+            tree = content_tree_from_dict(json.loads(tree_file.read_text(encoding="utf-8")))
+        except Exception:
+            continue
+        _search_items(tree.items, tree.course_code, query_lower, results)
+
+    return results
+
+
+def _search_items(items: list, course_code: str, query: str, results: list) -> None:
+    """Recursive helper — traverse ContentItem tree collecting title matches."""
+    for item in items:
+        if query in item.title.lower():
+            results.append(
+                {
+                    "course": course_code,
+                    "title": item.title,
+                    "type": item.type,
+                    "url": item.url,
+                }
+            )
+        if item.children:
+            _search_items(item.children, course_code, query, results)
