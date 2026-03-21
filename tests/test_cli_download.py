@@ -90,7 +90,7 @@ def test_download_exits_1_when_no_cache(tmp_path):
 def test_download_prints_run_course_first_when_no_cache(tmp_path):
     with patch("bb.config.BB_DIR", tmp_path):
         result = runner.invoke(app, ["download", "BTP200", "--all"])
-    assert "course" in result.output.lower() or "cache" in result.output.lower()
+    assert "bb course" in result.output or "course" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -255,6 +255,25 @@ def test_download_skips_already_downloaded_file(tmp_path):
         result = runner.invoke(app, ["download", "BTP200", "--all"])
     mock_dl.download.assert_not_called()
     assert "skip" in result.output.lower() or "⏩" in result.output
+
+
+def test_download_shows_warning_on_download_error(tmp_path):
+    """DownloadError → print ⚠ + error message, continue, contribute to failed count."""
+    from bb.downloader import DownloadError
+
+    with patch("bb.config.BB_DIR", tmp_path):
+        save_tree(_make_tree([_pdf_item("Syllabus")]))
+    with (
+        patch("bb.config.BB_DIR", tmp_path),
+        patch("bb.cli.Downloader") as mock_dl_cls,
+        patch("bb.cli.Database"),
+    ):
+        mock_dl = MagicMock()
+        mock_dl.download.side_effect = DownloadError("HTTP 403")
+        mock_dl_cls.return_value = mock_dl
+        result = runner.invoke(app, ["download", "BTP200", "--all"])
+    assert result.exit_code == 0  # continues, doesn't crash
+    assert "⚠" in result.output or "failed" in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
