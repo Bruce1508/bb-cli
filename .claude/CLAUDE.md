@@ -61,3 +61,21 @@ Inspect `bb/models/content.py`, the course/download commands in `bb/cli.py`, and
 ## Skills and Subagents
 
 Use `.claude/context/` for project memory, `.claude/skills/` for repeatable workflows, and `.claude/agents/` for specialized review or investigation once those are added. Keep this file constitutional and path-aware; move long checklists and playbooks into skills or context files.
+
+## Git Rules
+
+- **NEVER commit `docs/` or `tasks/`** — internal planning files (specs, plans, brainstorming). They are in `.gitignore`. If `git add` warns "ignored file", stop immediately — never force-add.
+- **`git filter-repo` removes remote** — after running it, always re-add: `git remote add origin git@github.com:Bruce1508/bb-cli.git`
+- **Force push only after intentional history rewrite** — use `git push --force origin main` only after `git filter-repo`. Normal pushes use `--force-with-lease`.
+
+## Python / Testing Gotchas (learned Day 8–9)
+
+- **`pdfplumber` pages outside `with` block** — `pdf.pages` raises after context exits. Always capture `page_count = len(pdf.pages)` INSIDE `with pdfplumber.open() as pdf:`.
+- **`iterdir()` on missing dir** — `Path.iterdir()` raises `FileNotFoundError` if dir doesn't exist. Guard: `if not path.exists(): return ...` before iterating.
+- **`httpx.stream()` needs method arg** — `client.stream("GET", url)`, not `client.stream(url)`. Also: `Content-Length` is a string — cast: `int(response.headers.get("content-length", 0))`.
+- **`patch()` needs module-level import** — `patch("bb.tools.queries.pdfplumber.open")` requires `import pdfplumber` at module level. Lazy imports inside functions don't exist as attributes at patch time.
+- **`or` vs `is not None`** — `x or default` treats empty list/string/0 as falsy. Use `x if x is not None else default` when "provided but empty" is a valid value.
+- **Library classes must not have UI deps** — never put `typer.confirm` / `input()` inside library classes (`Downloader`, etc.). That's the CLI layer's responsibility; mixing them breaks non-TTY usage and testing.
+- **Partial file cleanup on failure** — on download error, always `dest_path.unlink(missing_ok=True)` in except clauses so corrupt partial files don't accumulate silently.
+- **`uv pip install -e .` .pth bug** — hatchling generates `_bb_cli.pth` without trailing newline; Python skips it. Fix: `printf '/path/to/bb-cli\n' > .venv/lib/python3.13/site-packages/_bb_cli.pth`.
+- **`webbrowser.open(None)`** — silently opens `"None"` as a URL. Always guard: `if item.url is None: raise typer.Exit(1)` before calling.
