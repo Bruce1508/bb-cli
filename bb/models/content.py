@@ -2,17 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional
 
 
 @dataclass
 class ContentItem:
     type: str                            # "module" | "file" | "folder" | "discussion" | "link" | "assignment"
     title: str
-    url: Optional[str] = None            # Blackboard view URL
-    download_url: Optional[str] = None   # Direct file download URL (bbcswebdav/*)
-    size_bytes: Optional[int] = None
-    mime_type: Optional[str] = None
+    url: str | None = None               # Blackboard view URL
+    download_url: str | None = None      # Direct file download URL (bbcswebdav/*)
+    size_bytes: int | None = None
+    mime_type: str | None = None
     children: list[ContentItem] = field(default_factory=list)
 
 
