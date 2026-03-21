@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import webbrowser
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -13,6 +14,7 @@ import bb.config as _config_module
 from bb.auto_setup import install_auto_sync, uninstall_auto_sync
 from bb.config import BBConfig, NotificationConfig, load_config, save_config
 from bb.db import Database
+from bb.downloader import Downloader, DownloadError
 from bb.notify import dispatch_notify
 from bb.parsers.ical import ICalParseError, parse_ical
 
@@ -677,3 +679,151 @@ def cache_clear(
         console.print(f"[green]✔[/green] Cleared cache for {course_code.upper()}.")
     else:
         console.print(f"[green]✔[/green] Cleared cache for {count} course(s).")
+
+
+def _ext_from_url(url: str | None) -> str:
+    """Extract file extension from URL: 'https://host/file.pdf?x=1' → '.pdf'."""
+    if not url:
+        return ""
+    path_part = url.split("?")[0].split("/")[-1]
+    return ("." + path_part.rsplit(".", 1)[-1]) if "." in path_part else ""
+
+
+def _collect_downloadable(items: list) -> list:
+    """DFS: return all ContentItems that have a download_url set."""
+    result = []
+    for item in items:
+        if item.download_url:
+            result.append(item)
+        result.extend(_collect_downloadable(item.children))
+    return result
+
+
+def _find_items_by_title(items: list, query: str) -> list:
+    """DFS: return all ContentItems whose title contains query (case-insensitive)."""
+    result = []
+    for item in items:
+        if query.lower() in item.title.lower():
+            result.append(item)
+        result.extend(_find_items_by_title(item.children, query))
+    return result
+
+
+@app.command()
+def download(
+    course_code: str = typer.Argument(..., help="Course code, e.g. BTP200"),
+    all_files: bool = typer.Option(False, "--all", help="Download all downloadable files"),
+    file_type: str | None = typer.Option(None, "--type", help="Filter by type: pdf, html, etc."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be downloaded"),
+    item_name: str | None = typer.Argument(None, help="Specific item name (substring match)"),
+) -> None:
+    """Download course files to ~/.bb/files/<COURSE>/."""
+    import bb.cache as cache
+    from bb.security.session import SessionError, SessionManager
+
+    BB_DIR = _config_module.BB_DIR
+    tree = cache.load_tree(course_code)
+    if tree is None:
+        console.print(
+            f"[red]✘[/red] No cache for [bold]{course_code.upper()}[/bold]. "
+            f"Run [bold]bb course {course_code.upper()}[/bold] first."
+        )
+        raise typer.Exit(1)
+
+    candidates = _collect_downloadable(tree.items)
+
+    # Apply --type filter: extension-first, mime_type fallback
+    if file_type:
+        ft = file_type.lower()
+
+        def _type_match(item) -> bool:
+            ext = _ext_from_url(item.download_url).lstrip(".")
+            if ext == ft:
+                return True
+            return bool(item.mime_type and ft in item.mime_type.lower())
+
+        candidates = [i for i in candidates if _type_match(i)]
+
+    # Apply item name filter
+    if item_name:
+        candidates = [i for i in candidates if item_name.lower() in i.title.lower()]
+
+    if not candidates:
+        console.print("[yellow]No downloadable files found matching criteria.[/yellow]")
+        raise typer.Exit(0)
+
+    if dry_run:
+        console.print(f"[bold]Would download {len(candidates)} file(s):[/bold]")
+        for item in candidates:
+            ext = _ext_from_url(item.download_url)
+            console.print(f"  {item.title}{ext}")
+        raise typer.Exit(0)
+
+    dest_dir = BB_DIR / "files" / course_code.upper()
+    sm = SessionManager(BB_DIR / "session.enc")
+    downloader = Downloader(sm)
+    downloaded = skipped = failed = 0
+
+    console.print(f"📥 [bold]{course_code.upper()}[/bold] — Downloading files")
+
+    with Database(BB_DIR / "bb.db") as db:
+        db.setup()
+        for item in candidates:
+            ext = _ext_from_url(item.download_url)
+            filename = item.title.replace("/", "_") + ext
+            dest_check = dest_dir / filename
+
+            if dest_check.exists() and dest_check.stat().st_size > 0:
+                console.print(f"  [dim]⏩ {filename}  already downloaded[/dim]")
+                skipped += 1
+                continue
+
+            try:
+                saved = downloader.download(item.download_url, dest_dir, filename)
+                size = saved.stat().st_size
+                db.record_download(course_code, saved.name, str(saved), size)
+                console.print(f"  [green]✔[/green] {saved.name}  {size // 1024} KB")
+                downloaded += 1
+            except (DownloadError, SessionError) as e:
+                console.print(f"  [yellow]⚠[/yellow]  {filename}  {e}")
+                failed += 1
+
+    console.print(
+        f"[green]✔[/green] {downloaded} downloaded, {skipped} skipped, {failed} failed"
+        f"  →  [dim]{dest_dir}[/dim]"
+    )
+
+
+@app.command(name="open")
+def open_item(
+    course_code: str = typer.Argument(..., help="Course code, e.g. BTP200"),
+    item_name: str = typer.Argument(..., help="Item title (substring match)"),
+) -> None:
+    """Open a course item in the browser."""
+    import bb.cache as cache
+
+    tree = cache.load_tree(course_code)
+    if tree is None:
+        console.print(
+            f"[red]✘[/red] No cache for [bold]{course_code.upper()}[/bold]. "
+            f"Run [bold]bb course {course_code.upper()}[/bold] first."
+        )
+        raise typer.Exit(1)
+
+    matches = _find_items_by_title(tree.items, item_name)
+
+    if not matches:
+        console.print(f"[yellow]No item matching '[bold]{item_name}[/bold]' found.[/yellow]")
+        console.print("Available items:")
+        for item in tree.items:
+            console.print(f"  • {item.title}")
+        raise typer.Exit(1)
+
+    item = matches[0]
+
+    if item.url is None:
+        console.print(f"[yellow]No URL available for '[bold]{item.title}[/bold]'.[/yellow]")
+        raise typer.Exit(1)
+
+    console.print(f"→ Opening in browser: [dim]{item.url}[/dim]")
+    webbrowser.open(item.url)
