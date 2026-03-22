@@ -165,3 +165,26 @@ def test_download_uses_get_method(tmp_path):
     with patch("bb.downloader.httpx.Client", return_value=mock_client):
         d.download("https://example.com/file.pdf", tmp_path, "file.pdf")
     mock_client.stream.assert_called_once_with("GET", "https://example.com/file.pdf")
+
+
+def test_download_cleans_up_partial_file_after_mid_download_timeout(tmp_path):
+    """Partial file must be deleted when TimeoutException raised during iter_bytes."""
+    sm = _make_sm()
+    d = Downloader(sm)
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.iter_bytes.side_effect = httpx.TimeoutException("read timeout")
+    mock_response.__enter__ = lambda s: s
+    mock_response.__exit__ = MagicMock(return_value=False)
+
+    mock_client = MagicMock()
+    mock_client.stream.return_value = mock_response
+    mock_client.__enter__ = lambda s: s
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("bb.downloader.httpx.Client", return_value=mock_client):
+        with pytest.raises(DownloadError):
+            d.download("https://example.com/file.pdf", tmp_path, "file.pdf")
+
+    assert not (tmp_path / "file.pdf").exists()

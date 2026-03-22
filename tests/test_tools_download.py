@@ -57,9 +57,12 @@ def test_list_downloaded_files_filters_by_course(tmp_path):
     assert result[0]["course"] == "BTP200"
 
 
-def test_list_downloaded_files_returns_empty_when_no_db(tmp_path):
-    """Graceful degradation — no DB should return [] not crash."""
-    with patch("bb.config.BB_DIR", tmp_path):
+def test_list_downloaded_files_returns_empty_when_db_unavailable(tmp_path):
+    """Graceful degradation — DB constructor failure returns [] not crash."""
+    with (
+        patch("bb.config.BB_DIR", tmp_path),
+        patch("bb.tools.queries.Database", side_effect=Exception("cannot open db")),
+    ):
         result = list_downloaded_files()
     assert result == []
 

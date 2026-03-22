@@ -6,7 +6,7 @@ from datetime import datetime
 
 @dataclass
 class ContentItem:
-    type: str                            # "module" | "file" | "folder" | "discussion" | "link" | "assignment"
+    type: str  # "module" | "file" | "folder" | "discussion" | "link" | "assignment"
     title: str
     url: str | None = None               # Blackboard view URL
     download_url: str | None = None      # Direct file download URL (bbcswebdav/*)

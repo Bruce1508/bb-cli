@@ -655,8 +655,12 @@ def course(
         console.print(f"[dim]⟳ Scraping {course_code.upper()} content...[/dim]")
         sm = SessionManager(BB_DIR / "session.enc")
         adapter = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm)
-        content_tree = adapter.fetch_course_content(course_code.upper(), bb_id)
-        cache.save_tree(content_tree)
+        try:
+            content_tree = adapter.fetch_course_content(course_code.upper(), bb_id)
+            cache.save_tree(content_tree)
+        except Exception as exc:
+            console.print(f"[red]✘[/red] Scrape failed: {exc}")
+            raise typer.Exit(1)
 
     # 3. Display
     if tree:
@@ -824,8 +828,7 @@ def open_item(
     if not matches:
         console.print(f"[yellow]No item matching '[bold]{item_name}[/bold]' found.[/yellow]")
         console.print("Available items:")
-        all_items = _find_items_by_title(tree.items, "")  # empty string matches everything
-        for item in all_items:
+        for item in tree.items:
             console.print(f"  • {item.title}")
         raise typer.Exit(1)
 

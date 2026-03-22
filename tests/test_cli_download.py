@@ -368,3 +368,37 @@ def test_open_prints_no_url_message_when_url_none(tmp_path):
     with patch("bb.config.BB_DIR", tmp_path):
         result = runner.invoke(app, ["open", "BTP200", "Broken"])
     assert "no url" in result.output.lower() or "url" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# bb download — real Database integration
+# ---------------------------------------------------------------------------
+
+
+def test_download_records_to_db_on_success(tmp_path):
+    """record_download must hit the real Database — not just a mock."""
+    from bb.db import Database
+
+    with patch("bb.config.BB_DIR", tmp_path):
+        save_tree(_make_tree([_pdf_item("Notes")]))
+    with Database(tmp_path / "bb.db") as db:
+        db.setup()
+
+    saved_path = tmp_path / "files" / "BTP200" / "Notes.pdf"
+    saved_path.parent.mkdir(parents=True, exist_ok=True)
+    saved_path.touch()
+
+    with (
+        patch("bb.config.BB_DIR", tmp_path),
+        patch("bb.cli.Downloader") as mock_dl_cls,
+    ):
+        mock_dl = MagicMock()
+        mock_dl.download.return_value = saved_path
+        mock_dl_cls.return_value = mock_dl
+        result = runner.invoke(app, ["download", "BTP200", "--all"])
+
+    assert result.exit_code == 0, result.output
+    with Database(tmp_path / "bb.db") as db:
+        downloads = db.get_downloads()
+    assert len(downloads) == 1
+    assert downloads[0]["filename"] == "Notes.pdf"

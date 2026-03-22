@@ -318,10 +318,17 @@ class Database:
         path: str,
         size_bytes: int | None,
     ) -> None:
-        """INSERT OR REPLACE into downloads. course stored as UPPER(course)."""
+        """Upsert download record. course stored as UPPER(course).
+
+        Preserves row id on re-download.
+        """
         self._conn.execute(
-            "INSERT OR REPLACE INTO downloads (course, filename, path, size_bytes, downloaded_at)"
-            " VALUES (UPPER(?), ?, ?, ?, ?)",
+            "INSERT INTO downloads (course, filename, path, size_bytes, downloaded_at)"
+            " VALUES (UPPER(?), ?, ?, ?, ?)"
+            " ON CONFLICT(course, filename) DO UPDATE SET"
+            "   path=excluded.path,"
+            "   size_bytes=excluded.size_bytes,"
+            "   downloaded_at=excluded.downloaded_at",
             (course, filename, path, size_bytes, datetime.now(timezone.utc).isoformat()),
         )
         self._conn.commit()

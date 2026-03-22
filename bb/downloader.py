@@ -12,7 +12,7 @@ import httpx
 
 from bb.security.session import SessionManager
 
-LARGE_FILE_BYTES: int = 50 * 1024 * 1024  # 50 MB
+CHUNK_SIZE: int = 65536  # 64 KB read chunks for streaming downloads
 
 
 class DownloadError(Exception):
@@ -42,8 +42,8 @@ class Downloader:
         """
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest_path = self._resolve_filename(dest_dir, filename)
-        cookies = self._extract_cookies()
         try:
+            cookies = self._extract_cookies()
             with httpx.Client(
                 cookies=cookies,
                 timeout=httpx.Timeout(30.0, read=300.0),
@@ -52,7 +52,7 @@ class Downloader:
                 with client.stream("GET", url) as response:
                     response.raise_for_status()
                     with open(dest_path, "wb") as f:
-                        for chunk in response.iter_bytes():
+                        for chunk in response.iter_bytes(chunk_size=CHUNK_SIZE):
                             f.write(chunk)
         except httpx.HTTPStatusError as e:
             dest_path.unlink(missing_ok=True)
