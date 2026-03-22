@@ -235,58 +235,53 @@ class BlackboardUltraAdapter(LMSAdapter):
         )
 
     def fetch_course_list(self) -> list[dict]:
-        """Scrape My Courses page → list of {code, bb_id, name}.
+        """Scrape course list → list of {code, bb_id, name}.
 
-        URL pattern: /ultra/institution-page
-        Extracts internal Blackboard ID from href:
-          /ultra/courses/_773522_1/outline → bb_id = "_773522_1"
+        Uses the activity stream page — extracts unique course links from
+        [analytics-id='stream.entry.course'] anchors. Only returns courses
+        with recent activity in the stream.
         """
         import re as _re
 
         from playwright.sync_api import sync_playwright
 
-        state = self._sm.decrypt_session()  # raises SessionError if missing/corrupt
-        sel = self._selectors.get("courses", {})
+        state = self._sm.decrypt_session()
+        stream_sel = self._selectors.get("activity_stream", {})
+        container_sel = stream_sel.get("container", "#activity-stream")
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             context = browser.new_context(storage_state=state)
             page = context.new_page()
             try:
-                page.goto(f"{self._lms_url}/ultra/institution-page")
-                page.wait_for_selector(
-                    sel.get("item", "bb-base-courses-list-item"),
-                    timeout=15_000,
+                page.goto(
+                    f"{self._lms_url}{STREAM_PATH}",
+                    wait_until="networkidle",
+                    timeout=STREAM_TIMEOUT_MS,
                 )
+                page.wait_for_selector(container_sel, timeout=15_000)
 
-                courses = []
-                for el in page.query_selector_all(sel.get("item", "bb-base-courses-list-item")):
-                    link = el.query_selector(sel.get("link", "a[href*='/ultra/courses/']"))
-                    if not link:
-                        continue
+                seen: dict[str, dict] = {}
+                for link in page.query_selector_all("[analytics-id='stream.entry.course']"):
                     href = link.get_attribute("href") or ""
-                    # Extract "_773522_1" from "/ultra/courses/_773522_1/outline"
-                    # Use re to match _<digits>_<digits> pattern — do not assume ending in "_1"
-                    parts = [seg for seg in href.split("/") if _re.match(r"^_\d+_\d+$", seg)]
+                    parts = [s for s in href.split("/") if _re.match(r"^_\d+_\d+$", s)]
                     if not parts:
                         continue
                     bb_id = parts[0]
-                    name_el = el.query_selector(sel.get("name", ".course-name"))
-                    name = name_el.inner_text().strip() if name_el else ""
-                    # Course code: prefer data attribute, fallback to first word of name
-                    code_el = el.query_selector(sel.get("code", "[data-course-id]"))
-                    code = (
-                        (code_el.get_attribute("data-course-id") or "").upper()
-                        if code_el
-                        else ""
-                    )
-                    if not code:
-                        first = name.split()[0] if name else ""
-                        code = first.upper() if (first and len(first) <= 8) else bb_id
-                    courses.append({"code": code, "bb_id": bb_id, "name": name})
+                    if bb_id in seen:
+                        continue
+                    raw = link.inner_text().strip()
+                    m = _re.search(r"\(([^)]+)\)", raw)
+                    if m:
+                        code = m.group(1).split(".")[0].upper()
+                        name = raw[: raw.rfind("(")].strip()
+                    else:
+                        code = raw.split()[0].upper()
+                        name = raw
+                    seen[bb_id] = {"code": code, "bb_id": bb_id, "name": name}
+                return list(seen.values())
             finally:
                 browser.close()
-        return courses
 
     def fetch_course_content(self, course_code: str, course_bb_id: str) -> "ContentTree":
         """DFS scrape of course outline page → ContentTree.
@@ -313,11 +308,12 @@ class BlackboardUltraAdapter(LMSAdapter):
             page = context.new_page()
             try:
                 url = f"{self._lms_url}/ultra/courses/{course_bb_id}/outline"
-                page.goto(url)
-                page.wait_for_selector(
-                    sel.get("content_list", "[data-testid='course-content-list']"),
-                    timeout=20_000,
+                page.goto(url, wait_until="load")
+                # content_list may be empty (no container wrapper) — fall back to item
+                _wait_sel = sel.get("content_list") or sel.get(
+                    "content_item", "[data-content-id]"
                 )
+                page.wait_for_selector(_wait_sel, timeout=20_000)
 
                 counter = {"total": 0}
                 items = _scrape_content_level(page, page, sel, depth=0, counter=counter)
@@ -345,11 +341,17 @@ class BlackboardUltraAdapter(LMSAdapter):
         - Has grade-score element → GradeItem
         - Otherwise             → Announcement
         """
-        # Course name
+        # Course name — text is "Display Name (CODE.SECTION.YEAR)", extract base code
+        import re as _re_local
         course_sel = sel.get("course_name", "[analytics-id='stream.entry.course']")
         course_fallback = sel.get("course_name_fallback", ".course-item__name")
         course_elem = elem.query_selector(course_sel) or elem.query_selector(course_fallback)
-        course = course_elem.inner_text().strip() if course_elem else "Unknown"
+        if course_elem:
+            raw = course_elem.inner_text().strip()
+            m = _re_local.search(r"\(([^)]+)\)", raw)
+            course = m.group(1).split(".")[0].upper() if m else raw.split()[0].upper()
+        else:
+            course = "Unknown"
 
         # Title — required; skip item if missing
         title_sel = sel.get("title", ".name a.js-title-link")
@@ -422,12 +424,27 @@ def _load_selectors(path: Path) -> dict:
 def _parse_due_date(text: str) -> datetime:
     """Parse a due date string from the Activity Stream DOM into a UTC datetime.
 
-    Handles formats like 'Jan 20, 2026 at 11:59 PM' and 'Jan 20, 2026'.
+    Handles formats including:
+    - 'Jan 20, 2026 at 11:59 PM'
+    - 'Jan 20, 2026'
+    - '3/27/26, 11:59 PM (EDT)'   ← Seneca Blackboard Ultra format
+    - '3/27/26, 11:59 PM'
+
     Falls back to 7 days from now if the text cannot be parsed.
     """
+    import re as _re
+
+    # Strip "Due Date: " / "Due: " prefixes
+    text = _re.sub(r"^Due\s*(Date)?:\s*", "", text.strip(), flags=_re.IGNORECASE)
+    # Strip trailing timezone like " (EDT)" or " (EST)"
+    text = _re.sub(r"\s*\([A-Z]{2,4}\)\s*$", "", text)
     text = text.strip().replace(" at ", " ")
+
     for fmt in (
-        "%b %d, %Y %I:%M %p",
+        "%m/%d/%y, %I:%M %p",   # 3/27/26, 11:59 PM  ← Seneca format
+        "%m/%d/%Y, %I:%M %p",  # 3/27/2026, 11:59 PM
+        "%m/%d/%y",             # 3/27/26
+        "%b %d, %Y %I:%M %p",  # Jan 20, 2026 11:59 PM
         "%b %d, %Y",
         "%B %d, %Y %I:%M %p",
         "%B %d, %Y",
@@ -459,15 +476,23 @@ def _parse_content_item(el, sel: dict):
     """
     from bb.models.content import ContentItem
 
-    title_el = el.query_selector(sel.get("content_item_title", ".content-title"))
+    title_el = el.query_selector(sel.get("content_item_title", ".content-title")) or el.query_selector(
+        sel.get("content_item_title_fallback", "h2, h3, h4")
+    )
     title = title_el.inner_text().strip() if title_el else "Untitled"
 
-    # Detect type from data attribute, then CSS class keywords
+    # Detect type — expand button presence is the most reliable signal for folders
     item_type = "file"  # default
     type_attr = el.get_attribute("data-content-type") or ""
     class_attr = el.get_attribute("class") or ""
+    expand_sel = sel.get("expand_button", "")
+    expand_sel_fb = sel.get("expand_button_fallback", "")
 
-    if type_attr:
+    if expand_sel and el.query_selector(expand_sel):
+        item_type = "folder"
+    elif expand_sel_fb and el.query_selector(expand_sel_fb):
+        item_type = "folder"
+    elif type_attr:
         item_type = type_attr.lower()
     elif "module" in class_attr or "folder" in class_attr:
         item_type = "module"
@@ -547,14 +572,18 @@ def _scrape_content_level(
                 except Exception:
                     pass
 
-            # Recurse into nested content list, scoped to this element
-            nested = el.query_selector(
-                sel.get("content_list", "[data-testid='course-content-list']")
-            )
+            # Recurse into folder children — try named container first,
+            # fall back to querying content_item directly on the element itself.
+            _container_sel = sel.get("content_list")
+            nested = el.query_selector(_container_sel) if _container_sel else None
             if nested:
-                # Pass `nested` (ElementHandle) as root — scopes query to this subtree
                 item.children = _scrape_content_level(
                     nested, page, sel, depth + 1, counter
+                )
+            elif el.query_selector(sel.get("content_item", "[data-content-id]")):
+                # Children are DOM-children of the item element (no wrapper div)
+                item.children = _scrape_content_level(
+                    el, page, sel, depth + 1, counter
                 )
 
         items.append(item)
