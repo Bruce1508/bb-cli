@@ -5,8 +5,14 @@ import inspect
 import json
 import types
 import typing
+from typing import TYPE_CHECKING
 
 from bb.tools import TOOL_REGISTRY
+
+if TYPE_CHECKING:
+    from rich.console import Console
+
+    from bb.config import BBConfig
 
 _TYPE_MAP: dict = {int: "integer", str: "string", bool: "boolean", float: "number"}
 MAX_TOOL_ROUNDS = 5
@@ -40,7 +46,7 @@ def _tool_description(fn: object) -> str:
         if stripped.startswith(("Args:", "Returns:", "Raises:")):
             break
         lines.append(stripped)
-    return " ".join(l for l in lines if l).strip()
+    return " ".join(ln for ln in lines if ln).strip()
 
 
 def _build_props(fn: object) -> tuple[dict, list[str]]:
