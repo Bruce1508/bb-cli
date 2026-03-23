@@ -462,3 +462,34 @@ def test_handle_slash_unknown_returns_false(monkeypatch):
     engine = ChatEngine(BBConfig())
     con = Console(file=StringIO(), highlight=False)
     assert _handle_slash("/frobnicate", engine, con) is False
+
+
+# ---------------------------------------------------------------------------
+# CLI integration — bb chat command
+# ---------------------------------------------------------------------------
+
+def test_cli_chat_command_exists():
+    """bb chat command is registered in the Typer app."""
+    from typer.testing import CliRunner
+    from bb.cli import app
+    runner = CliRunner()
+    result = runner.invoke(app, ["chat", "--help"])
+    assert result.exit_code == 0
+    assert "chat" in result.output.lower() or "query" in result.output.lower()
+
+
+def test_cli_chat_single_shot_no_ollama(monkeypatch, tmp_path):
+    """bb chat 'q' prints Ollama-unavailable message gracefully."""
+    import sys
+    from unittest.mock import MagicMock, patch
+    from typer.testing import CliRunner
+    mock_pkg = MagicMock()
+    mock_pkg.list.side_effect = Exception("not running")
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+    with patch("bb.config.BB_DIR", tmp_path), patch("bb.db.BB_DIR", tmp_path):
+        from bb.cli import app
+        runner = CliRunner()
+        result = runner.invoke(app, ["chat", "hello"])
+    assert result.exit_code == 0
+    assert "ollama" in result.output.lower() or "Ollama" in result.output

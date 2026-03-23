@@ -840,3 +840,12 @@ def open_item(
 
     console.print(f"→ Opening in browser: [dim]{item.url}[/dim]")
     webbrowser.open(item.url)
+
+
+@app.command()
+def chat(
+    query: Optional[str] = typer.Argument(None, help="Ask a single question (omit for interactive REPL)"),
+) -> None:
+    """Chat with your AI assistant — ask about deadlines, grades, and course content."""
+    from bb.ai.chat import run_chat
+    run_chat(query=query, cfg=load_config(), console=console)
