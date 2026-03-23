@@ -55,6 +55,8 @@ def _build_props(fn: object) -> tuple[dict, list[str]]:
     props: dict = {}
     required: list[str] = []
     for pname, param in sig.parameters.items():
+        if pname in ("self", "cls"):
+            continue
         ann = param.annotation
         if ann is inspect.Parameter.empty:
             ann = str
@@ -186,47 +188,50 @@ class ChatEngine:
         tools = build_ollama_tools()
         think = self._cfg.ai.think
 
-        for _ in range(MAX_TOOL_ROUNDS):
-            with Status("⟳ Thinking...", console=con, spinner="dots"):
-                response = _ollama.chat(
-                    model=self.model,
-                    messages=self._msgs,
-                    tools=tools,
-                    think=think,
-                )
-            msg = response.message
-            msg_dict: dict = {"role": "assistant", "content": msg.content or ""}
+        try:
+            for _ in range(MAX_TOOL_ROUNDS):
+                with Status("⟳ Thinking...", console=con, spinner="dots"):
+                    response = _ollama.chat(
+                        model=self.model,
+                        messages=self._msgs,
+                        tools=tools,
+                        think=think,
+                    )
+                msg = response.message
+                msg_dict: dict = {"role": "assistant", "content": msg.content or ""}
 
-            if not msg.tool_calls:
+                if not msg.tool_calls:
+                    self._msgs.append(msg_dict)
+                    return msg.content or ""
+
+                # Decode arguments once, then use for both history and dispatch
+                decoded_calls = []
+                for tc in msg.tool_calls:
+                    args = tc.function.arguments
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            args = {}
+                    decoded_calls.append((tc.function.name, args))
+
+                msg_dict["tool_calls"] = [
+                    {"function": {"name": name, "arguments": args}}
+                    for name, args in decoded_calls
+                ]
                 self._msgs.append(msg_dict)
-                return msg.content or ""
 
-            # Build tool_calls list for history
-            tc_list = []
-            for tc in msg.tool_calls:
-                args = tc.function.arguments
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except Exception:
-                        args = {}
-                tc_list.append({"function": {"name": tc.function.name, "arguments": args}})
-            msg_dict["tool_calls"] = tc_list
-            self._msgs.append(msg_dict)
+                for name, args in decoded_calls:
+                    con.print(f"[dim]🔧 {_tool_label(name)}...[/dim]")
+                    result = dispatch_tool(name, args)
+                    self._msgs.append({"role": "tool", "content": result})
 
-            # Execute tools and inject results
-            for tc in msg.tool_calls:
-                args = tc.function.arguments
-                if isinstance(args, str):
-                    try:
-                        args = json.loads(args)
-                    except Exception:
-                        args = {}
-                con.print(f"[dim]🔧 {_tool_label(tc.function.name)}...[/dim]")
-                result = dispatch_tool(tc.function.name, args)
-                self._msgs.append({"role": "tool", "content": result})
-
-        return "I reached my limit processing your request. Please try a simpler question."
+            limit_msg = "I reached my limit processing your request. Please try a simpler question."
+            self._msgs.append({"role": "assistant", "content": limit_msg})
+            return limit_msg
+        except Exception:
+            self._msgs.pop()  # remove the user message so history stays consistent
+            raise
 
 
 # ---------------------------------------------------------------------------
@@ -301,8 +306,6 @@ def run_chat(
 
 def _handle_slash(cmd_line: str, engine: "ChatEngine", con: "Console") -> bool:
     """Dispatch slash commands inside the REPL. Returns True if should exit."""
-    import subprocess
-
     cmd = cmd_line.split()[0].lower()
 
     if cmd in ("/exit", "/quit"):
@@ -314,12 +317,17 @@ def _handle_slash(cmd_line: str, engine: "ChatEngine", con: "Console") -> bool:
         con.print("[dim]Conversation cleared.[/dim]")
 
     elif cmd == "/sync":
+        import subprocess
+        import sys
         con.print("[dim]Running bb sync...[/dim]")
-        result = subprocess.run(["bb", "sync"], capture_output=True, text=True)
+        result = subprocess.run(
+            [sys.executable, "-m", "bb.cli", "sync"],
+            capture_output=True, text=True,
+        )
         if result.returncode == 0:
             con.print("[green]✔[/green] Sync complete.")
         else:
-            con.print("[yellow]⚠[/yellow] Could not run sync. Try `bb sync` from terminal.")
+            con.print("[yellow]⚠[/yellow] Sync failed — try `bb sync` from terminal.")
 
     elif cmd == "/courses":
         from bb.tools.queries import get_course_list

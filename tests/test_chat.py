@@ -75,6 +75,7 @@ def test_dispatch_tool_graceful_when_db_missing(tmp_path, monkeypatch):
     """Tool returns empty list (not exception) when DB doesn't exist."""
     import json
     monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.db.BB_DIR", tmp_path)
     from bb.ai.chat import dispatch_tool
     result = dispatch_tool("get_upcoming_deadlines", {"days": 7})
     parsed = json.loads(result)
@@ -493,3 +494,73 @@ def test_cli_chat_single_shot_no_ollama(monkeypatch, tmp_path):
         result = runner.invoke(app, ["chat", "hello"])
     assert result.exit_code == 0
     assert "ollama" in result.output.lower() or "Ollama" in result.output
+
+
+def test_ollama_turn_max_tool_rounds_exhausted(monkeypatch):
+    """Engine returns limit message and appends it to history after MAX_TOOL_ROUNDS."""
+    import sys
+    from unittest.mock import MagicMock
+    from bb.config import BBConfig
+    from bb.ai.chat import MAX_TOOL_ROUNDS
+
+    # Every response always has a tool call — forces loop to exhaust
+    tc = MagicMock()
+    tc.function.name = "get_course_list"
+    tc.function.arguments = {}
+    msg_with_tool = MagicMock()
+    msg_with_tool.content = ""
+    msg_with_tool.tool_calls = [tc]
+
+    mock_ollama_pkg = MagicMock()
+    m1 = MagicMock()
+    m1.model = "qwen3:8b"
+    mock_ollama_pkg.list.return_value = MagicMock(models=[m1])
+    mock_ollama_pkg.chat.return_value = MagicMock(message=msg_with_tool)
+
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    from bb.ai.chat import ChatEngine
+    engine = ChatEngine(BBConfig())
+    result = engine.process_turn("loop forever")
+
+    assert "limit" in result.lower()
+    assert mock_ollama_pkg.chat.call_count == MAX_TOOL_ROUNDS
+    # The limit message must be recorded in history so the next turn sees it
+    assert engine._msgs[-1] == {"role": "assistant", "content": result}
+
+
+def test_handle_slash_sync(monkeypatch):
+    """/sync calls subprocess with sys.executable and reports success/failure."""
+    import sys
+    from io import StringIO
+    from unittest.mock import MagicMock, patch
+    from rich.console import Console
+
+    mock_pkg = MagicMock()
+    m1 = MagicMock()
+    m1.model = "qwen3:8b"
+    mock_pkg.list.return_value = MagicMock(models=[m1])
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    from bb.ai.chat import ChatEngine, _handle_slash
+    from bb.config import BBConfig
+    engine = ChatEngine(BBConfig())
+
+    # Success path
+    buf = StringIO()
+    con = Console(file=buf, highlight=False)
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=0)
+        result = _handle_slash("/sync", engine, con)
+    assert result is False
+    assert "✔" in buf.getvalue() or "Sync complete" in buf.getvalue()
+
+    # Failure path
+    buf2 = StringIO()
+    con2 = Console(file=buf2, highlight=False)
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(returncode=1)
+        _handle_slash("/sync", engine, con2)
+    assert "Sync failed" in buf2.getvalue() or "⚠" in buf2.getvalue()
