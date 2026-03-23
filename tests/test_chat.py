@@ -177,3 +177,288 @@ def test_get_model_returns_none_when_no_suitable_model(monkeypatch):
     monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
     from bb.ai.providers.ollama import get_model
     assert get_model("") is None
+
+
+# ---------------------------------------------------------------------------
+# ChatEngine
+# ---------------------------------------------------------------------------
+
+def _make_engine(monkeypatch, model: str = "qwen3:8b"):
+    """Return a ChatEngine with mocked provider detection."""
+    import sys
+    from unittest.mock import MagicMock
+    from bb.config import BBConfig
+    mock_ollama_pkg = MagicMock()
+    m1 = MagicMock()
+    m1.model = model
+    mock_ollama_pkg.list.return_value = MagicMock(models=[m1])
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+    from bb.ai.chat import ChatEngine
+    return ChatEngine(BBConfig()), mock_ollama_pkg
+
+
+def test_chat_engine_detects_ollama_provider(monkeypatch):
+    engine, _ = _make_engine(monkeypatch)
+    assert engine.provider == "ollama"
+    assert engine.model == "qwen3:8b"
+
+
+def test_chat_engine_none_provider_when_unavailable(monkeypatch):
+    import sys
+    from unittest.mock import MagicMock
+    from bb.config import BBConfig
+    mock_ollama_pkg = MagicMock()
+    mock_ollama_pkg.list.side_effect = Exception("not running")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+    from bb.ai.chat import ChatEngine
+    engine = ChatEngine(BBConfig())
+    assert engine.provider == "none"
+
+
+def test_chat_engine_clear_history(monkeypatch):
+    engine, _ = _make_engine(monkeypatch)
+    engine._msgs.append({"role": "user", "content": "hello"})
+    engine.clear_history()
+    assert len(engine._msgs) == 1
+    assert engine._msgs[0]["role"] == "system"
+
+
+def test_chat_engine_get_provider_display(monkeypatch):
+    engine, _ = _make_engine(monkeypatch)
+    display = engine.get_provider_display()
+    assert "ollama" in display
+    assert "qwen3:8b" in display
+
+
+def test_chat_engine_get_provider_display_think_on(monkeypatch):
+    engine, _ = _make_engine(monkeypatch)
+    engine._cfg.ai.think = True
+    display = engine.get_provider_display()
+    assert "think=on" in display
+
+
+def test_process_turn_no_provider(monkeypatch):
+    import sys
+    from unittest.mock import MagicMock
+    from bb.config import BBConfig
+    mock_ollama_pkg = MagicMock()
+    mock_ollama_pkg.list.side_effect = Exception("not running")
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+    from bb.ai.chat import ChatEngine
+    engine = ChatEngine(BBConfig())
+    result = engine.process_turn("hello")
+    assert "Ollama" in result or "provider" in result.lower()
+
+
+def test_ollama_turn_plain_response(monkeypatch):
+    """process_turn returns text when LLM responds without tool calls."""
+    import sys
+    from unittest.mock import MagicMock
+    from bb.config import BBConfig
+
+    mock_msg = MagicMock()
+    mock_msg.content = "You have 3 upcoming deadlines."
+    mock_msg.tool_calls = None
+
+    mock_response = MagicMock()
+    mock_response.message = mock_msg
+
+    mock_ollama_pkg = MagicMock()
+    m1 = MagicMock()
+    m1.model = "qwen3:8b"
+    mock_ollama_pkg.list.return_value = MagicMock(models=[m1])
+    mock_ollama_pkg.chat.return_value = mock_response
+
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    from bb.ai.chat import ChatEngine
+    engine = ChatEngine(BBConfig())
+    result = engine.process_turn("what are my deadlines?")
+    assert result == "You have 3 upcoming deadlines."
+
+
+def test_ollama_turn_tool_call_dispatched(monkeypatch):
+    """process_turn executes tool calls and returns final LLM response."""
+    import sys
+    from unittest.mock import MagicMock, call
+    from bb.config import BBConfig
+
+    # First response: has a tool call
+    tc = MagicMock()
+    tc.function.name = "get_course_list"
+    tc.function.arguments = {}
+
+    msg_with_tool = MagicMock()
+    msg_with_tool.content = ""
+    msg_with_tool.tool_calls = [tc]
+
+    # Second response: plain text after tool result injected
+    msg_final = MagicMock()
+    msg_final.content = "Your courses are: BTP200, OPS445."
+    msg_final.tool_calls = None
+
+    mock_ollama_pkg = MagicMock()
+    m1 = MagicMock()
+    m1.model = "qwen3:8b"
+    mock_ollama_pkg.list.return_value = MagicMock(models=[m1])
+    mock_ollama_pkg.chat.side_effect = [
+        MagicMock(message=msg_with_tool),
+        MagicMock(message=msg_final),
+    ]
+
+    monkeypatch.setitem(sys.modules, "ollama", mock_ollama_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    from bb.ai.chat import ChatEngine
+    engine = ChatEngine(BBConfig())
+    result = engine.process_turn("list my courses")
+
+    assert result == "Your courses are: BTP200, OPS445."
+    assert mock_ollama_pkg.chat.call_count == 2
+    # A tool result message should be in history
+    roles = [m["role"] for m in engine._msgs]
+    assert "tool" in roles
+
+
+# ---------------------------------------------------------------------------
+# run_chat() — single-shot and no-provider paths
+# ---------------------------------------------------------------------------
+
+def _make_mock_ollama_module(model: str = "qwen3:8b", response_text: str = "answer"):
+    """Return a mock ollama module that returns response_text on chat()."""
+    from unittest.mock import MagicMock
+    mock_msg = MagicMock()
+    mock_msg.content = response_text
+    mock_msg.tool_calls = None
+    m1 = MagicMock()
+    m1.model = model
+    mock_pkg = MagicMock()
+    mock_pkg.list.return_value = MagicMock(models=[m1])
+    mock_pkg.chat.return_value = MagicMock(message=mock_msg)
+    return mock_pkg
+
+
+def test_run_chat_single_shot_prints_response(monkeypatch, capsys):
+    """Single-shot mode prints the LLM response and returns."""
+    import sys
+    from io import StringIO
+    from rich.console import Console
+    mock_pkg = _make_mock_ollama_module(response_text="3 deadlines coming up.")
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    buf = StringIO()
+    con = Console(file=buf, highlight=False)
+    from bb.ai.chat import run_chat
+    from bb.config import BBConfig
+    run_chat(query="how many deadlines?", cfg=BBConfig(), console=con)
+    output = buf.getvalue()
+    assert "3 deadlines coming up." in output
+
+
+def test_run_chat_no_provider_prints_warning(monkeypatch):
+    """When Ollama is unavailable, run_chat prints a warning and returns."""
+    import sys
+    from io import StringIO
+    from unittest.mock import MagicMock
+    from rich.console import Console
+    mock_pkg = MagicMock()
+    mock_pkg.list.side_effect = Exception("not running")
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    buf = StringIO()
+    con = Console(file=buf, highlight=False)
+    from bb.ai.chat import run_chat
+    from bb.config import BBConfig
+    run_chat(cfg=BBConfig(), console=con)
+    output = buf.getvalue()
+    assert "Ollama" in output or "ollama" in output.lower()
+
+
+def test_handle_slash_exit_returns_true(monkeypatch):
+    """/exit slash command signals REPL to exit."""
+    import sys
+    from unittest.mock import MagicMock
+    mock_pkg = MagicMock()
+    m1 = MagicMock()
+    m1.model = "qwen3:8b"
+    mock_pkg.list.return_value = MagicMock(models=[m1])
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+    from bb.ai.chat import ChatEngine, _handle_slash
+    from bb.config import BBConfig
+    from io import StringIO
+    from rich.console import Console
+    engine = ChatEngine(BBConfig())
+    con = Console(file=StringIO(), highlight=False)
+    assert _handle_slash("/exit", engine, con) is True
+    assert _handle_slash("/quit", engine, con) is True
+
+
+def test_handle_slash_clear_resets_history(monkeypatch):
+    """/clear resets conversation history."""
+    import sys
+    from unittest.mock import MagicMock
+    mock_pkg = MagicMock()
+    m1 = MagicMock()
+    m1.model = "qwen3:8b"
+    mock_pkg.list.return_value = MagicMock(models=[m1])
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+    from bb.ai.chat import ChatEngine, _handle_slash
+    from bb.config import BBConfig
+    from io import StringIO
+    from rich.console import Console
+    engine = ChatEngine(BBConfig())
+    engine._msgs.append({"role": "user", "content": "hello"})
+    con = Console(file=StringIO(), highlight=False)
+    result = _handle_slash("/clear", engine, con)
+    assert result is False
+    assert len(engine._msgs) == 1  # only system message remains
+
+
+def test_handle_slash_think_toggles(monkeypatch):
+    """/think toggles engine._cfg.ai.think."""
+    import sys
+    from unittest.mock import MagicMock
+    mock_pkg = MagicMock()
+    m1 = MagicMock()
+    m1.model = "qwen3:8b"
+    mock_pkg.list.return_value = MagicMock(models=[m1])
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+    from bb.ai.chat import ChatEngine, _handle_slash
+    from bb.config import BBConfig
+    from io import StringIO
+    from rich.console import Console
+    engine = ChatEngine(BBConfig())
+    assert engine._cfg.ai.think is False
+    con = Console(file=StringIO(), highlight=False)
+    _handle_slash("/think", engine, con)
+    assert engine._cfg.ai.think is True
+    _handle_slash("/think", engine, con)
+    assert engine._cfg.ai.think is False
+
+
+def test_handle_slash_unknown_returns_false(monkeypatch):
+    """/unknown command returns False (no exit)."""
+    import sys
+    from unittest.mock import MagicMock
+    mock_pkg = MagicMock()
+    m1 = MagicMock()
+    m1.model = "qwen3:8b"
+    mock_pkg.list.return_value = MagicMock(models=[m1])
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+    from bb.ai.chat import ChatEngine, _handle_slash
+    from bb.config import BBConfig
+    from io import StringIO
+    from rich.console import Console
+    engine = ChatEngine(BBConfig())
+    con = Console(file=StringIO(), highlight=False)
+    assert _handle_slash("/frobnicate", engine, con) is False
