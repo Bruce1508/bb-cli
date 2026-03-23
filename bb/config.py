@@ -18,12 +18,19 @@ class NotificationConfig(BaseModel):
     discord_webhook: str = ""  # plaintext — moves to keyring Day 4
 
 
+class AIConfig(BaseModel):
+    provider: Literal["ollama"] = "ollama"
+    model: str = ""       # empty = auto-detect best available model
+    think: bool = False   # True = chain-of-thought (slower, deeper); False = fast mode
+
+
 class BBConfig(BaseModel):
     lms_type: Literal["blackboard_ultra"] = "blackboard_ultra"
     lms_url: str = "https://learn.senecapolytechnic.ca"
     ical_url: str | None = None  # saved automatically after first bb import-ical run
     notification: NotificationConfig = NotificationConfig()
     sync_interval_hours: int = 4  # used by bb auto-setup (Day 7)
+    ai: AIConfig = AIConfig()
 
 
 def load_config() -> BBConfig:
