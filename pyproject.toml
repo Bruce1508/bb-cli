@@ -15,6 +15,7 @@ dependencies = [
     "pydantic>=2.0",
     "tomli-w>=1.0",
     "pdfplumber>=0.11",
+    "ollama>=0.3",
 ]
 
 [project.scripts]
