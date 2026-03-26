@@ -197,7 +197,9 @@ class Database:
     ) -> list[Deadline]:
         """Return deadlines within the next `days` days, sorted by due_at ascending."""
         now = datetime.now(timezone.utc)
-        lower = (now - timedelta(days=1)) if include_overdue else now
+        # Look back 8 hours so deadlines that passed earlier today remain
+        # visible (handles UTC/local timezone offset for North American users).
+        lower = (now - timedelta(days=1)) if include_overdue else (now - timedelta(hours=8))
         upper = now + timedelta(days=days)
         rows = self._conn.execute(
             "SELECT id, course, title, due_at, source FROM deadlines"

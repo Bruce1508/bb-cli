@@ -76,7 +76,9 @@ def _normalise_to_utc(dt: datetime | object) -> datetime:
 
     if isinstance(dt, datetime):
         if dt.tzinfo is None:
-            return dt.replace(tzinfo=timezone.utc)
+            # Floating time (no tz in iCal) — Blackboard means local time, not UTC
+            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+            return dt.replace(tzinfo=local_tz).astimezone(timezone.utc)
         return dt.astimezone(timezone.utc)
 
     # date with no time component — treat as midnight UTC

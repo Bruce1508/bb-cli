@@ -133,12 +133,17 @@ def test_date_only_dtstart_converted_to_midnight_utc():
     assert oop.due_at == datetime(2026, 3, 28, 0, 0, 0, tzinfo=timezone.utc)
 
 
-def test_naive_datetime_treated_as_utc():
-    """Naive DTSTART (no Z, no TZID) → treated as UTC."""
+def test_naive_datetime_treated_as_local():
+    """Naive DTSTART (no Z, no TZID) → treated as local machine time, stored as UTC."""
+    from datetime import datetime as _dt
     ics = _make_ics(("BTI325 - Web - Lab 1", "DTSTART:20260325T235900"))
     result = parse_ical(ics)
     assert len(result) == 1
-    assert result[0].due_at == datetime(2026, 3, 25, 23, 59, 0, tzinfo=timezone.utc)
+    # Stored as UTC — exact value depends on machine timezone, so just verify
+    # it's UTC-aware and represents 23:59 in local time
+    local_tz = _dt.now(timezone.utc).astimezone().tzinfo
+    expected_utc = _dt(2026, 3, 25, 23, 59, 0, tzinfo=local_tz).astimezone(timezone.utc)
+    assert result[0].due_at == expected_utc
 
 
 def test_utc_z_datetime_preserved():
