@@ -3,9 +3,9 @@ from __future__ import annotations
 
 # Preferred models in priority order (best tool-calling accuracy first)
 _DEFAULT_PRIORITY = [
-    "qwen3:30b-a3b",
     "qwen3:8b",
     "qwen2.5:7b",
+    "qwen2.5:3b",
     "llama3.2:3b",
 ]
 

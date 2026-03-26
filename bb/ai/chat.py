@@ -213,18 +213,23 @@ class ChatEngine:
                             args = json.loads(args)
                         except Exception:
                             args = {}
-                    decoded_calls.append((tc.function.name, args))
+                    call_id = getattr(tc, "id", None) or tc.function.name
+                    decoded_calls.append((tc.function.name, args, call_id))
 
                 msg_dict["tool_calls"] = [
-                    {"function": {"name": name, "arguments": args}}
-                    for name, args in decoded_calls
+                    {"id": call_id, "function": {"name": name, "arguments": args}}
+                    for name, args, call_id in decoded_calls
                 ]
                 self._msgs.append(msg_dict)
 
-                for name, args in decoded_calls:
+                for name, args, call_id in decoded_calls:
                     con.print(f"[dim]🔧 {_tool_label(name)}...[/dim]")
                     result = dispatch_tool(name, args)
-                    self._msgs.append({"role": "tool", "content": result})
+                    self._msgs.append({
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": result,
+                    })
 
             limit_msg = "I reached my limit processing your request. Please try a simpler question."
             self._msgs.append({"role": "assistant", "content": limit_msg})
