@@ -73,15 +73,22 @@ def sync_stream(adapter: object, db: Database) -> tuple[int, int, int]:
 def sync_grades(adapter: object, db: Database) -> int:
     """Scrape the Grades page via adapter, upsert all grade items to DB.
 
+    Also upserts any new course codes discovered via grades to course_map,
+    so courses with no activity stream entries are still discoverable.
+
     Returns grades_new count.
     Raises SessionError if the session is expired or missing.
     """
     items = adapter.fetch_grades()
     new = 0
+    seen_courses: set[str] = set()
     for item in items:
         if isinstance(item, GradeItem):
             if db.upsert_grade(item):
                 new += 1
+            if item.course and item.course not in seen_courses:
+                seen_courses.add(item.course)
+                db.upsert_course_map(item.course, "", "")
     return new
 
 

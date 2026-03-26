@@ -15,17 +15,21 @@ import bb.config as _config_module
 from bb.db import Database
 
 
-def get_upcoming_deadlines(days: int = 7, course: str | None = None) -> list[dict]:
+def get_upcoming_deadlines(days: int = 14, course: str | None = None) -> list[dict]:
     """Return upcoming deadlines from the local database.
 
     Use this tool when the student asks about homework, assignments, deadlines,
     due dates, or anything like 'what do I have coming up' or 'what's due soon'.
 
     Args:
-        days: Number of days to look ahead (default 7, max 30).
-        course: Optional course code filter (e.g. 'BTI325'). Case-insensitive.
+        days: Number of days to look ahead (default 14, max 30).
+        course: Specific course code to filter by (e.g. 'BTI325'). Omit or pass
+            None to get deadlines for ALL courses. Do NOT pass 'all' — pass None.
     """
     BB_DIR = _config_module.BB_DIR
+    # Normalize LLM-generated sentinel values that mean "no filter"
+    if course and course.lower() in ("all", "any", "*", "none"):
+        course = None
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
@@ -36,15 +40,28 @@ def get_upcoming_deadlines(days: int = 7, course: str | None = None) -> list[dic
     if course:
         deadlines = [d for d in deadlines if d.course.upper() == course.upper()]
 
-    return [
-        {
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    result = []
+    for d in deadlines:
+        delta = d.due_at - now
+        hours = delta.total_seconds() / 3600
+        if hours < 0:
+            when = f"was due {abs(int(hours))}h ago (today)"
+        elif hours < 24:
+            when = f"due in {int(hours)}h (today)"
+        elif hours < 48:
+            when = "due tomorrow"
+        else:
+            when = f"due in {int(hours / 24)} days"
+        result.append({
             "course": d.course,
             "title": d.title,
             "due_at": d.due_at.isoformat(),
+            "when": when,
             "source": d.source,
-        }
-        for d in deadlines
-    ]
+        })
+    return result
 
 
 def get_grades(course: str | None = None) -> list[dict]:
@@ -54,9 +71,13 @@ def get_grades(course: str | None = None) -> list[dict]:
     did on an assignment, or 'what are my grades' / 'how am I doing'.
 
     Args:
-        course: Optional course code filter (e.g. 'BTI325'). Case-insensitive.
+        course: Specific course code to filter by (e.g. 'BTI325'). Omit or pass
+            None to get grades for ALL courses. Do NOT pass 'all' — pass None.
     """
     BB_DIR = _config_module.BB_DIR
+    # Normalize LLM-generated sentinel values that mean "no filter"
+    if course and course.lower() in ("all", "any", "*", "none"):
+        course = None
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
@@ -89,10 +110,14 @@ def get_announcements(course: str | None = None, unread: bool = False) -> list[d
     news, or 'what's new in my courses' / 'any announcements'.
 
     Args:
-        course: Optional course code filter. Case-insensitive.
+        course: Specific course code to filter by (e.g. 'BTI325'). Omit or pass
+            None to get announcements for ALL courses. Do NOT pass 'all' — pass None.
         unread: If True, return only announcements not yet read.
     """
     BB_DIR = _config_module.BB_DIR
+    # Normalize LLM-generated sentinel values that mean "no filter"
+    if course and course.lower() in ("all", "any", "*", "none"):
+        course = None
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
@@ -130,6 +155,7 @@ def get_course_list() -> list[str]:
                 "SELECT DISTINCT course FROM deadlines "
                 "UNION SELECT DISTINCT course FROM announcements "
                 "UNION SELECT DISTINCT course FROM grades "
+                "UNION SELECT DISTINCT course_code FROM course_map "
                 "ORDER BY course"
             ).fetchall()
     except Exception:

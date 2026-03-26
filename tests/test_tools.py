@@ -142,6 +142,17 @@ def test_get_upcoming_deadlines_returns_empty_list_when_no_db(tmp_path):
     assert result == []
 
 
+def test_get_upcoming_deadlines_course_all_returns_all(db_path):
+    """LLM passes course='all' meaning every course — must not filter to empty."""
+    with Database(db_path / "bb.db") as db:
+        db.setup()
+        db.upsert_deadline(_deadline(id="dl-1", course="BTI325"))
+        db.upsert_deadline(_deadline(id="dl-2", course="BTI425"))
+    with patch("bb.config.BB_DIR", db_path):
+        result = get_upcoming_deadlines(course="all")
+    assert len(result) == 2
+
+
 # ---------------------------------------------------------------------------
 # get_grades
 # ---------------------------------------------------------------------------
@@ -206,6 +217,17 @@ def test_get_grades_returns_empty_list_when_no_db(tmp_path):
     with patch("bb.config.BB_DIR", tmp_path):
         result = get_grades()
     assert result == []
+
+
+def test_get_grades_course_all_returns_all(db_path):
+    """LLM passes course='all' meaning every course — must not filter to empty."""
+    with Database(db_path / "bb.db") as db:
+        db.setup()
+        db.upsert_grade(_grade(id="g-1", course="BTI325"))
+        db.upsert_grade(_grade(id="g-2", course="BTI425"))
+    with patch("bb.config.BB_DIR", db_path):
+        result = get_grades(course="all")
+    assert len(result) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +305,17 @@ def test_get_announcements_returns_empty_list_when_no_db(tmp_path):
     with patch("bb.config.BB_DIR", tmp_path):
         result = get_announcements()
     assert result == []
+
+
+def test_get_announcements_course_all_returns_all(db_path):
+    """LLM passes course='all' meaning every course — must not filter to empty."""
+    with Database(db_path / "bb.db") as db:
+        db.setup()
+        db.upsert_announcement(_announcement(id="ann-1", course="BTI325"))
+        db.upsert_announcement(_announcement(id="ann-2", course="BTI425"))
+    with patch("bb.config.BB_DIR", db_path):
+        result = get_announcements(course="all")
+    assert len(result) == 2
 
 
 # ---------------------------------------------------------------------------
