@@ -22,6 +22,7 @@ _ULTRA_URL_PATTERN: str = "**/ultra/**"
 AUTH_TIMEOUT_MS: int = 300_000  # 5 minutes
 STREAM_TIMEOUT_MS: int = 30_000  # 30 seconds
 STREAM_PATH: str = "/ultra/stream"
+COURSES_PATH: str = "/ultra/course"
 MAX_STREAM_ITEMS: int = 20  # circuit breaker
 
 # Selectors file resolved relative to this file's location (project root / selectors/)
@@ -235,19 +236,18 @@ class BlackboardUltraAdapter(LMSAdapter):
         )
 
     def fetch_course_list(self) -> list[dict]:
-        """Scrape course list → list of {code, bb_id, name}.
+        """Scrape full course list → list of {code, bb_id, name}.
 
-        Uses the activity stream page — extracts unique course links from
-        [analytics-id='stream.entry.course'] anchors. Only returns courses
-        with recent activity in the stream.
+        Scrapes the institution page which shows ALL enrolled courses
+        (not just courses with recent activity). Falls back to the activity
+        stream if the institution page yields nothing.
         """
         import re as _re
 
         from playwright.sync_api import sync_playwright
 
         state = self._sm.decrypt_session()
-        stream_sel = self._selectors.get("activity_stream", {})
-        container_sel = stream_sel.get("container", "#activity-stream")
+        course_sel = self._selectors.get("courses", {})
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -255,13 +255,58 @@ class BlackboardUltraAdapter(LMSAdapter):
             page = context.new_page()
             try:
                 page.goto(
-                    f"{self._lms_url}{STREAM_PATH}",
-                    wait_until="networkidle",
+                    f"{self._lms_url}{COURSES_PATH}",
+                    wait_until="load",
                     timeout=STREAM_TIMEOUT_MS,
                 )
-                page.wait_for_selector(container_sel, timeout=15_000)
+                try:
+                    # Wait for course code elements — these only appear after
+                    # Angular finishes rendering course data into the article shells
+                    page.wait_for_selector(
+                        course_sel.get("code", ".multi-column-course-id"),
+                        timeout=15_000,
+                    )
+                except Exception:
+                    pass  # fall through — will return empty and trigger fallback
 
                 seen: dict[str, dict] = {}
+                for article in page.query_selector_all(
+                    course_sel.get("item", "article[data-course-id]")
+                ):
+                    # bb_id is the data-course-id attribute on the article itself
+                    bb_id = article.get_attribute("data-course-id") or ""
+                    if not bb_id or bb_id in seen:
+                        continue
+
+                    # Course code from .multi-column-course-id or [id^='course-id-']
+                    code_el = article.query_selector(
+                        course_sel.get("code", ".multi-column-course-id")
+                    ) or article.query_selector(
+                        course_sel.get("code_fallback", "[id^='course-id-']")
+                    )
+                    if not code_el:
+                        continue
+                    code = code_el.inner_text().strip().split(".")[0].upper()
+                    if not code:
+                        continue
+
+                    # Course display name
+                    name_el = article.query_selector(
+                        course_sel.get("name", "[id^='course-name-']")
+                    )
+                    name = name_el.inner_text().strip() if name_el else ""
+
+                    seen[bb_id] = {"code": code, "bb_id": bb_id, "name": name}
+
+                if seen:
+                    return list(seen.values())
+
+                # Fallback: extract from activity stream links
+                page.goto(
+                    f"{self._lms_url}{STREAM_PATH}",
+                    wait_until="load",
+                    timeout=STREAM_TIMEOUT_MS,
+                )
                 for link in page.query_selector_all("[analytics-id='stream.entry.course']"):
                     href = link.get_attribute("href") or ""
                     parts = [s for s in href.split("/") if _re.match(r"^_\d+_\d+$", s)]
@@ -336,10 +381,11 @@ class BlackboardUltraAdapter(LMSAdapter):
     ) -> Deadline | Announcement | GradeItem | None:
         """Parse one activity stream element into a typed data object.
 
-        Type detection strategy (Option A — DOM element presence):
-        - Has due-date element  → Deadline
-        - Has grade-score element → GradeItem
-        - Otherwise             → Announcement
+        Type detection strategy:
+        1. Title prefix "Grade posted:" → GradeItem  (primary — stable across BB deployments)
+        2. Has due-date DOM element     → Deadline    (DOM presence fallback)
+        3. Has grade-score DOM element  → GradeItem   (DOM presence fallback)
+        4. Otherwise                   → Announcement
         """
         # Course name — text is "Display Name (CODE.SECTION.YEAR)", extract base code
         import re as _re_local
@@ -364,6 +410,33 @@ class BlackboardUltraAdapter(LMSAdapter):
             return None
 
         # --- Type detection ---
+        # Strategy 1 (primary): title-prefix — Blackboard always uses "Grade posted: <item>"
+        # More reliable than DOM presence because CSS class names vary per BB deployment.
+        if _re_local.match(r"grade\s+posted:", title, _re_local.IGNORECASE):
+            item_name = _re_local.sub(r"(?i)^grade\s+posted:\s*", "", title).strip()
+            score_sel = sel.get("score", "[data-testid='grade-score']")
+            score_fallback = sel.get("score_fallback", ".grade-score-value")
+            badge_elem = (
+                elem.query_selector(score_sel)
+                or elem.query_selector(score_fallback)
+                or elem.query_selector(".attempt-grade")
+                or elem.query_selector("[class*='grade-pill']")
+                or elem.query_selector("[class*='grade-value']")
+            )
+            score, out_of = (
+                _parse_grade_badge(badge_elem.inner_text().strip())
+                if badge_elem else (None, None)
+            )
+            return GradeItem(
+                id=content_hash(course, item_name, ""),
+                course=course,
+                item=item_name,
+                score=score,
+                out_of=out_of,
+                status="graded",
+            )
+
+        # Strategy 2 (fallback): DOM element presence — catches non-standard grade items
         due_sel = sel.get("due_date", ".content .due-date bb-translate")
         due_fallback = sel.get("due_date_fallback", "[data-testid='due-date']")
         score_sel = sel.get("score", "[data-testid='grade-score']")
@@ -386,8 +459,9 @@ class BlackboardUltraAdapter(LMSAdapter):
             out_of_sel = sel.get("out_of", "[data-testid='grade-out-of']")
             out_of_fallback = sel.get("out_of_fallback", ".grade-out-of-value")
             out_of_elem = elem.query_selector(out_of_sel) or elem.query_selector(out_of_fallback)
-            score = _parse_float(score_elem.inner_text().strip())
-            out_of = _parse_float(out_of_elem.inner_text().strip()) if out_of_elem else None
+            score, out_of = _parse_grade_badge(score_elem.inner_text().strip())
+            if out_of is None and out_of_elem:
+                out_of = _parse_float(out_of_elem.inner_text().strip())
             return GradeItem(
                 id=content_hash(course, title, ""),
                 course=course,
@@ -451,7 +525,8 @@ def _parse_due_date(text: str) -> datetime:
     ):
         try:
             dt = datetime.strptime(text, fmt)
-            return dt.replace(tzinfo=timezone.utc)
+            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+            return dt.replace(tzinfo=local_tz).astimezone(timezone.utc)
         except ValueError:
             continue
     return datetime.now(timezone.utc) + timedelta(days=7)
@@ -463,6 +538,22 @@ def _parse_float(text: str) -> float | None:
         return float(text.replace(",", ".").strip())
     except (ValueError, AttributeError):
         return None
+
+
+def _parse_grade_badge(text: str) -> tuple[float | None, float | None]:
+    """Parse a grade badge string into (score, out_of).
+
+    Handles the two formats Blackboard Ultra uses in the activity stream:
+    - Fraction: "0 / 1", "18 / 20"  → (0.0, 1.0), (18.0, 20.0)
+    - Percentage: "57.5%", "0%"      → (57.5, None), (0.0, None)
+    """
+    text = text.strip()
+    if "/" in text:
+        parts = text.split("/", 1)
+        return _parse_float(parts[0].strip()), _parse_float(parts[1].strip())
+    if text.endswith("%"):
+        return _parse_float(text[:-1]), None
+    return _parse_float(text), None
 
 
 MAX_ITEMS = 200
