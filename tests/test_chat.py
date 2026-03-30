@@ -1,6 +1,8 @@
 """Tests for bb chat AI layer."""
 from __future__ import annotations
 
+import json
+
 
 def test_aiconfig_defaults():
     from bb.config import AIConfig
@@ -564,3 +566,152 @@ def test_handle_slash_sync(monkeypatch):
         mock_run.return_value = MagicMock(returncode=1)
         _handle_slash("/sync", engine, con2)
     assert "Sync failed" in buf2.getvalue() or "⚠" in buf2.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# Chat history persistence
+# ---------------------------------------------------------------------------
+
+def test_history_saved_after_turn(monkeypatch, tmp_path):
+    """After a successful turn, user+assistant pair is saved to chat_history.json."""
+    import sys
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.ai.chat._config_module.BB_DIR", tmp_path)
+
+    mock_pkg = _make_mock_ollama_module(response_text="Here are your deadlines.")
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    from bb.ai.chat import ChatEngine
+    from bb.config import BBConfig
+    engine = ChatEngine(BBConfig())
+    engine.process_turn("what are my deadlines?")
+
+    history_file = tmp_path / "chat_history.json"
+    assert history_file.exists()
+    history = json.loads(history_file.read_text())
+    assert len(history) == 2
+    assert history[0] == {"role": "user", "content": "what are my deadlines?"}
+    assert history[1] == {"role": "assistant", "content": "Here are your deadlines."}
+
+
+def test_history_loaded_on_init(monkeypatch, tmp_path):
+    """ChatEngine loads saved history into _msgs on __init__."""
+    import sys
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.ai.chat._config_module.BB_DIR", tmp_path)
+
+    # Pre-populate history file
+    history = [
+        {"role": "user", "content": "old question"},
+        {"role": "assistant", "content": "old answer"},
+    ]
+    (tmp_path / "chat_history.json").write_text(json.dumps(history))
+
+    mock_pkg = _make_mock_ollama_module()
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    from bb.ai.chat import ChatEngine
+    from bb.config import BBConfig
+    engine = ChatEngine(BBConfig())
+
+    # system + 2 history messages
+    assert len(engine._msgs) == 3
+    assert engine._msgs[1] == {"role": "user", "content": "old question"}
+    assert engine._msgs[2] == {"role": "assistant", "content": "old answer"}
+
+
+def test_history_missing_file_starts_fresh(monkeypatch, tmp_path):
+    """Missing history file → fresh start, no error."""
+    import sys
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.ai.chat._config_module.BB_DIR", tmp_path)
+
+    mock_pkg = _make_mock_ollama_module()
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    from bb.ai.chat import ChatEngine
+    from bb.config import BBConfig
+    engine = ChatEngine(BBConfig())
+    assert len(engine._msgs) == 1  # only system prompt
+    assert engine._msgs[0]["role"] == "system"
+
+
+def test_history_corrupted_file_starts_fresh(monkeypatch, tmp_path):
+    """Corrupted history file → fresh start, no crash."""
+    import sys
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.ai.chat._config_module.BB_DIR", tmp_path)
+
+    (tmp_path / "chat_history.json").write_text("not valid json {{{{")
+
+    mock_pkg = _make_mock_ollama_module()
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    from bb.ai.chat import ChatEngine
+    from bb.config import BBConfig
+    engine = ChatEngine(BBConfig())
+    assert len(engine._msgs) == 1
+
+
+def test_clear_history_wipes_file(monkeypatch, tmp_path):
+    """/clear resets msgs to [system] only AND wipes chat_history.json."""
+    import sys
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.ai.chat._config_module.BB_DIR", tmp_path)
+
+    # Pre-populate history
+    history = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]
+    (tmp_path / "chat_history.json").write_text(json.dumps(history))
+
+    mock_pkg = _make_mock_ollama_module()
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    from bb.ai.chat import ChatEngine
+    from bb.config import BBConfig
+    engine = ChatEngine(BBConfig())
+    assert len(engine._msgs) == 3  # system + 2 history
+
+    engine.clear_history()
+
+    # In-memory: only system
+    assert len(engine._msgs) == 1
+    assert engine._msgs[0]["role"] == "system"
+
+    # File: empty list
+    saved = json.loads((tmp_path / "chat_history.json").read_text())
+    assert saved == []
+
+
+def test_history_trimmed_to_50_messages(monkeypatch, tmp_path):
+    """History file is trimmed to last 50 messages (FIFO) on save."""
+    import sys
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.ai.chat._config_module.BB_DIR", tmp_path)
+
+    # Pre-populate with 50 messages (25 pairs)
+    history = []
+    for i in range(25):
+        history.append({"role": "user", "content": f"q{i}"})
+        history.append({"role": "assistant", "content": f"a{i}"})
+    (tmp_path / "chat_history.json").write_text(json.dumps(history))
+
+    mock_pkg = _make_mock_ollama_module(response_text="new answer")
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    from bb.ai.chat import ChatEngine
+    from bb.config import BBConfig
+    engine = ChatEngine(BBConfig())
+    engine.process_turn("new question")
+
+    saved = json.loads((tmp_path / "chat_history.json").read_text())
+    assert len(saved) == 50  # trimmed to max
+    # Oldest pair (q0/a0) should have been dropped
+    assert saved[0]["content"] != "q0"
+    # Newest pair should be last
+    assert saved[-1] == {"role": "assistant", "content": "new answer"}

@@ -3,11 +3,18 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import types
 import typing
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+import bb.config as _config_module
 from bb.tools import TOOL_REGISTRY
+
+logger = logging.getLogger(__name__)
+
+_HISTORY_MAX = 50  # max messages persisted (user+assistant pairs only)
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -116,6 +123,10 @@ _TOOL_LABELS: dict[str, str] = {
     "search_content": "Searching content",
     "list_downloaded_files": "Listing downloaded files",
     "read_file_content": "Reading file",
+    "summarize_content": "Reading file for summary",
+    "generate_study_plan": "Gathering study materials",
+    "extract_key_concepts": "Collecting course materials",
+    "estimate_study_time": "Analyzing grades and deadlines",
 }
 
 
@@ -136,13 +147,55 @@ class ChatEngine:
         self._msgs: list[dict] = []
         self._reset_history()
 
+    def _history_path(self) -> Path:
+        return _config_module.BB_DIR / "chat_history.json"
+
+    def _load_history(self) -> list[dict]:
+        """Load persisted user+assistant messages. Returns [] on any failure."""
+        path = self._history_path()
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return data
+        except Exception as exc:
+            logger.debug("chat_history: could not load: %s", exc)
+        return []
+
+    def _save_history(self, user_content: str, assistant_content: str) -> None:
+        """Append a user+assistant pair to the history file (atomic write, FIFO trim)."""
+        history = self._load_history()
+        history.append({"role": "user", "content": user_content})
+        history.append({"role": "assistant", "content": assistant_content})
+        # Trim oldest messages first to keep at most _HISTORY_MAX entries
+        if len(history) > _HISTORY_MAX:
+            history = history[-_HISTORY_MAX:]
+        path = self._history_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.rename(path)
+        except Exception as exc:
+            logger.debug("chat_history: could not save: %s", exc)
+
     def _reset_history(self) -> None:
         from bb.ai.prompts import SYSTEM_PROMPT
         self._msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+        # Inject persisted history after system prompt
+        self._msgs.extend(self._load_history())
 
     def clear_history(self) -> None:
-        """Reset conversation history to initial state."""
-        self._reset_history()
+        """Reset conversation history to system prompt only and wipe the history file."""
+        from bb.ai.prompts import SYSTEM_PROMPT
+        self._msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+        path = self._history_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text("[]", encoding="utf-8")
+            tmp.rename(path)
+        except Exception as exc:
+            logger.debug("chat_history: could not clear: %s", exc)
 
     def _detect_provider(self) -> tuple[str, str]:
         """Auto-detect best available Ollama model. Returns (provider, model)."""
@@ -202,7 +255,9 @@ class ChatEngine:
 
                 if not msg.tool_calls:
                     self._msgs.append(msg_dict)
-                    return msg.content or ""
+                    response_text = msg.content or ""
+                    self._save_history(user_input, response_text)
+                    return response_text
 
                 # Decode arguments once, then use for both history and dispatch
                 decoded_calls = []

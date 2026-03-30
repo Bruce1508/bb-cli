@@ -5,6 +5,12 @@ TOOL_REGISTRY maps tool names to callable functions. Both the AI chat engine
 available tools and expose them to the LLM.
 """
 
+from bb.tools.ai_tools import (
+    estimate_study_time,
+    extract_key_concepts,
+    generate_study_plan,
+    summarize_content,
+)
 from bb.tools.queries import (
     get_announcements,
     get_course_content,
@@ -27,4 +33,8 @@ TOOL_REGISTRY: dict[str, object] = {
     "search_content": search_content,
     "list_downloaded_files": list_downloaded_files,
     "read_file_content": read_file_content,
+    "summarize_content": summarize_content,
+    "generate_study_plan": generate_study_plan,
+    "extract_key_concepts": extract_key_concepts,
+    "estimate_study_time": estimate_study_time,
 }
