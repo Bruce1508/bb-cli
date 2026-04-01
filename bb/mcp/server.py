@@ -14,8 +14,8 @@ from bb.tools import TOOL_REGISTRY
 # stdout stays clean — MCP JSON-RPC protocol uses it exclusively.
 mcp = FastMCP("bb-cli", log_level="WARNING")
 
-for _name, _fn in TOOL_REGISTRY.items():
-    mcp.add_tool(_fn, name=_name)
+for name, fn in TOOL_REGISTRY.items():
+    mcp.add_tool(fn, name=name)
 
 
 def run() -> None:

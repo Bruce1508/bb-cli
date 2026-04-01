@@ -19,11 +19,8 @@ def test_import_does_not_call_run():
 
 
 def test_run_is_callable():
-    """bb.mcp.server.run must be a plain callable (not a coroutine)."""
+    """bb.mcp.server.run must be a plain sync callable (not an async coroutine)."""
+    import asyncio
     import bb.mcp.server as srv
     assert callable(srv.run)
-
-
-def test_module_loads_without_import_error():
-    """Importing bb.mcp.server raises no ImportError."""
-    import bb.mcp.server  # noqa: F401
+    assert not asyncio.iscoroutinefunction(srv.run)
