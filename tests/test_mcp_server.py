@@ -18,6 +18,13 @@ def test_import_does_not_call_run():
     sys.modules.pop("bb.mcp.server", None)  # clean up so other tests use fresh import
 
 
+def test_module_loads_without_import_error():
+    """Importing bb.mcp.server raises no ImportError."""
+    sys.modules.pop("bb.mcp.server", None)
+    import bb.mcp.server  # noqa: F401
+    sys.modules.pop("bb.mcp.server", None)
+
+
 def test_run_is_callable():
     """bb.mcp.server.run must be a plain sync callable (not an async coroutine)."""
     import asyncio
