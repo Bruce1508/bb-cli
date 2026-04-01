@@ -64,3 +64,43 @@ def test_each_tool_has_valid_parameters_schema():
         assert tool.parameters.get("type") == "object", (
             f"Tool '{name}' parameters.type is not 'object'"
         )
+
+
+# ---------------------------------------------------------------------------
+# Group 2: Tool execution (via TOOL_REGISTRY directly)
+# Note: We call TOOL_REGISTRY[name](**args) directly, NOT FastMCP.call_tool().
+# FastMCP.call_tool() returns TextContent objects, not raw Python types.
+# The contract we're testing here is that the underlying functions work
+# correctly when accessed through the same registry the MCP server uses.
+# ---------------------------------------------------------------------------
+
+def test_get_course_list_returns_list(tmp_path, monkeypatch):
+    """get_course_list() returns an empty list gracefully when no DB exists."""
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.db.BB_DIR", tmp_path)
+    from bb.tools import TOOL_REGISTRY
+    result = TOOL_REGISTRY["get_course_list"]()
+    assert isinstance(result, list)
+
+
+def test_get_course_content_missing_required_arg_raises():
+    """get_course_content() with no args raises TypeError — 'course' is required."""
+    import pytest
+    from bb.tools import TOOL_REGISTRY
+    with pytest.raises(TypeError):
+        TOOL_REGISTRY["get_course_content"]()
+
+
+def test_tool_isolation_failure_does_not_affect_others(tmp_path, monkeypatch):
+    """One tool raising must not prevent other tools from running."""
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.db.BB_DIR", tmp_path)
+    from bb.tools import TOOL_REGISTRY
+    # Trigger failure on get_course_content (missing arg)
+    try:
+        TOOL_REGISTRY["get_course_content"]()
+    except TypeError:
+        pass
+    # Other tools must still work
+    result = TOOL_REGISTRY["get_course_list"]()
+    assert isinstance(result, list)
