@@ -117,4 +117,4 @@ def test_cli_mcp_server_command_exists():
     runner = CliRunner()
     result = runner.invoke(app, ["mcp-server", "--help"])
     assert result.exit_code == 0
-    assert "stdio" in result.output.lower() or "mcp" in result.output.lower()
+    assert "stdio" in result.output.lower()
