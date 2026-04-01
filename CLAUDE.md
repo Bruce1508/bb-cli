@@ -207,6 +207,6 @@ Inside the chat REPL, these slash commands are available:
 - **CLI not found after uv sync**: If `uv run bb` gives `ModuleNotFoundError`, run `uv pip install -e .` to force editable install registration
 - **`git filter-repo` removes remote**: After running `git filter-repo`, remote is deleted — re-add with `git remote add origin <url>` before force pushing
 - **Ollama tool calling**: `qwen2.5:7b` has better tool calling accuracy than `llama3.2:3b`. Always validate tool call arguments with Pydantic before executing. If tool calling fails, fall back to keyword-based routing.
-- **MCP server stdio**: MCP server communicates via stdin/stdout (stdio transport). Do NOT print anything to stdout in server mode — use stderr for logging. The `fastmcp` SDK handles this correctly.
+- **MCP server stdio**: MCP server communicates via stdin/stdout (stdio transport). Do NOT print anything to stdout in server mode — use stderr for logging. Use `from mcp.server.fastmcp import FastMCP` — `FastMCP` lives inside the official `mcp` package (`mcp>=1.12`), not the third-party `fastmcp` package. Pass `log_level="WARNING"` to suppress INFO noise to stderr.
 - **Chat streaming**: When streaming Ollama responses, use `rich.live.Live` context for smooth token-by-token display. Don't mix `print()` with Rich Live — it causes display glitches.
 - **Tool function docstrings matter**: Ollama/Claude read tool docstrings to decide when to call them. Write docstrings as if explaining to a smart intern what the function does and when to use it.
