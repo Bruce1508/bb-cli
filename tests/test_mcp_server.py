@@ -104,3 +104,17 @@ def test_tool_isolation_failure_does_not_affect_others(tmp_path, monkeypatch):
     # Other tools must still work
     result = TOOL_REGISTRY["get_course_list"]()
     assert isinstance(result, list)
+
+
+# ---------------------------------------------------------------------------
+# CLI integration
+# ---------------------------------------------------------------------------
+
+def test_cli_mcp_server_command_exists():
+    """bb mcp-server command must be registered in the Typer app."""
+    from typer.testing import CliRunner
+    from bb.cli import app
+    runner = CliRunner()
+    result = runner.invoke(app, ["mcp-server", "--help"])
+    assert result.exit_code == 0
+    assert "stdio" in result.output.lower() or "mcp" in result.output.lower()

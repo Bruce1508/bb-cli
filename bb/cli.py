@@ -849,3 +849,10 @@ def chat(
     """Chat with your AI assistant — ask about deadlines, grades, and course content."""
     from bb.ai.chat import run_chat
     run_chat(query=query, cfg=load_config(), console=console)
+
+
+@app.command("mcp-server")
+def mcp_server_cmd() -> None:
+    """Start MCP server for Claude Desktop / Cursor integration (stdio transport)."""
+    from bb.mcp.server import run
+    run()
