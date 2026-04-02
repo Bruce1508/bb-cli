@@ -24,7 +24,9 @@ pip install blackboard-cli
 bb setup-browsers   # install Chromium for Blackboard scraping (one-time)
 ```
 
-> Requires Python 3.11+
+> **Requires Python 3.11+** — check with `python3 --version`.
+> Don't have it? Download from [python.org/downloads](https://www.python.org/downloads/) (macOS/Windows)
+> or run `brew install python@3.11` (macOS with Homebrew).
 
 ---
 
