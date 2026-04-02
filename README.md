@@ -1,8 +1,8 @@
 # bb-cli — Blackboard for your terminal
 
 [![CI](https://github.com/Bruce1508/bb-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Bruce1508/bb-cli/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/bb-cli.svg)](https://pypi.org/project/bb-cli/)
-[![Python](https://img.shields.io/pypi/pyversions/bb-cli.svg)](https://pypi.org/project/bb-cli/)
+[![PyPI](https://img.shields.io/pypi/v/blackboard-cli.svg)](https://pypi.org/project/blackboard-cli/)
+[![Python](https://img.shields.io/pypi/pyversions/blackboard-cli.svg)](https://pypi.org/project/blackboard-cli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Stop opening Blackboard.** `bb` syncs your deadlines, grades, and announcements locally — then lets you ask an AI about them in plain English.
@@ -20,7 +20,7 @@ $ bb chat "what do I have due this week?"
 ## Install
 
 ```bash
-pip install bb-cli
+pip install blackboard-cli
 bb setup-browsers   # install Chromium for Blackboard scraping (one-time)
 ```
 
