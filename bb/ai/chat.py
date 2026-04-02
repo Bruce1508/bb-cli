@@ -222,9 +222,18 @@ class ChatEngine:
         if self.provider == "ollama":
             return self._ollama_turn(user_input, console)
         return (
-            "No AI provider configured.\n"
-            "• Make sure Ollama is running: brew services start ollama\n"
-            "• Then pull a model: ollama pull qwen3:30b-a3b"
+            "No AI provider found. bb chat needs an LLM to work.\n\n"
+            "Option 1 — Claude API (easiest, free tier available):\n"
+            "  1. Get a free API key at https://console.anthropic.com\n"
+            "  2. Add to ~/.bb/config.toml:\n"
+            "       [ai]\n"
+            "       provider = \"claude\"\n"
+            "       api_key = \"sk-ant-...\"\n\n"
+            "Option 2 — Ollama (free, runs fully offline):\n"
+            "  1. Install: https://ollama.com\n"
+            "  2. Pull a model: ollama pull qwen2.5:7b  (~4.7 GB)\n"
+            "  3. Run: ollama serve\n\n"
+            "Then restart bb chat."
         )
 
     def _ollama_turn(self, user_input: str, console: "Console | None") -> str:
