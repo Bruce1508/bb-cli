@@ -29,6 +29,16 @@ MAX_STREAM_ITEMS: int = 20  # circuit breaker
 _SELECTORS_PATH: Path = Path(__file__).parent.parent.parent / "selectors" / "blackboard_ultra.toml"
 
 
+def _launch_browser(playwright_ctx, *, headless: bool):
+    """Launch Chromium; raises RuntimeError with actionable message if browser not installed."""
+    try:
+        return playwright_ctx.chromium.launch(headless=headless)
+    except Exception as exc:
+        if "Executable doesn't exist" in str(exc) or "playwright install" in str(exc).lower():
+            raise RuntimeError("Chromium not found. Run: bb setup-browsers") from exc
+        raise
+
+
 @register("blackboard_ultra")
 class BlackboardUltraAdapter(LMSAdapter):
     """Blackboard Ultra adapter — handles auth, scraping, and session management."""
@@ -54,7 +64,7 @@ class BlackboardUltraAdapter(LMSAdapter):
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
+            browser = _launch_browser(p, headless=False)
             context = browser.new_context()
             page = context.new_page()
             page.goto(self._lms_url)
@@ -98,7 +108,7 @@ class BlackboardUltraAdapter(LMSAdapter):
         items: list[Deadline | Announcement | GradeItem] = []
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = _launch_browser(p, headless=True)
             context = browser.new_context(storage_state=state)
             page = context.new_page()
 
@@ -154,7 +164,7 @@ class BlackboardUltraAdapter(LMSAdapter):
         items: list[GradeItem] = []
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = _launch_browser(p, headless=True)
             context = browser.new_context(storage_state=state)
             page = context.new_page()
 
@@ -250,7 +260,7 @@ class BlackboardUltraAdapter(LMSAdapter):
         course_sel = self._selectors.get("courses", {})
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = _launch_browser(p, headless=True)
             context = browser.new_context(storage_state=state)
             page = context.new_page()
             try:
@@ -348,7 +358,7 @@ class BlackboardUltraAdapter(LMSAdapter):
         sel = self._selectors.get("course_content", {})
 
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = _launch_browser(p, headless=True)
             context = browser.new_context(storage_state=state)
             page = context.new_page()
             try:

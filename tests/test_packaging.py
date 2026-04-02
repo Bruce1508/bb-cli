@@ -33,3 +33,18 @@ def test_setup_browsers_command_exists():
     result = runner.invoke(app, ["setup-browsers", "--help"])
     assert result.exit_code == 0, f"exit code {result.exit_code}: {result.output}"
     assert "chromium" in result.output.lower(), "Help text must mention chromium"
+
+
+def test_browser_missing_raises_runtime_error():
+    """_launch_browser() must raise RuntimeError with actionable message when browser missing."""
+    from unittest.mock import MagicMock
+    import pytest
+    from bb.adapters.blackboard_ultra import _launch_browser
+
+    mock_playwright = MagicMock()
+    mock_playwright.chromium.launch.side_effect = Exception(
+        "Executable doesn't exist at /Users/test/.cache/ms-playwright/chromium"
+    )
+
+    with pytest.raises(RuntimeError, match="Chromium not found. Run: bb setup-browsers"):
+        _launch_browser(mock_playwright, headless=True)
