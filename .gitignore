@@ -12,9 +12,10 @@ htmlcov/
 **/.DS_Store
 # Note: ~/.bb/ is outside the repo — no gitignore entry needed
 
-# Keep internal docs/plans private — only CLAUDE.md is public
+# Keep internal docs/plans private — only CLAUDE.md and README.md are public
 *.md
 !CLAUDE.md
+!README.md
 
 # NEVER commit internal planning docs — specs, plans, brainstorming notes
 docs/
