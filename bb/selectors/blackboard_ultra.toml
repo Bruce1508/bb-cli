@@ -1,0 +1,80 @@
+# selectors/blackboard_ultra.toml
+# CSS selector pairs for Blackboard Ultra scraping.
+# Edit here when BB modifies its DOM — no code changes needed.
+# Each entry has a primary selector and a _fallback for resilience.
+
+[auth]
+# Confirms successful login to the Ultra dashboard
+dashboard_indicator = "[data-testid='ultra-header']"
+dashboard_indicator_fallback = "bb-base-layout"
+
+[activity_stream]
+# Wrapper: <div class="activity-stream row collapse" id="activity-stream">
+container = "#activity-stream"
+container_fallback = ".base-recent-activity"
+# Individual stream entry: <li class="stream-item-container ...">
+item = "li.stream-item-container"
+item_fallback = ".stream-item-container"
+# Course name: <a analytics-id="stream.entry.course" ...>Course (CODE.SECTION.YEAR)</a>
+course_name = "[analytics-id='stream.entry.course']"
+course_name_fallback = ".course-item__name"
+# Entry title: <a class="js-title-link" analytics-id="stream.entry.title">
+title = "[analytics-id='stream.entry.title']"
+title_fallback = "a.js-title-link"
+# Due date — PENDING: inspect "Due Date: 3/27/26..." text and send HTML
+due_date = "[analytics-id='stream.entry.dueDate']"
+due_date_fallback = ".due-date"
+
+[grades]
+# Path appended to lms_url to reach the grades page
+grades_path = "/ultra/grades"
+# Table row / card per grade entry
+grade_row = "[data-testid='grade-row']"
+grade_row_fallback = ".graded-item-row"
+# Course name within a grade row
+course_name = "[data-testid='grade-course-name']"
+course_name_fallback = ".course-name"
+# Assignment / item title
+item_title = "[data-testid='grade-item-title']"
+item_title_fallback = ".grade-item-title"
+# Numeric score
+score = "[data-testid='grade-score']"
+score_fallback = ".grade-score-value"
+# Max points denominator
+out_of = "[data-testid='grade-out-of']"
+out_of_fallback = ".grade-out-of-value"
+# Status badge (e.g. "Graded", "Submitted", "Needs Grading")
+status = "[data-testid='grade-status']"
+status_fallback = ".grade-status-label"
+
+[course_content]
+# Seneca Blackboard Ultra has no outer container wrapper — leave empty to skip wait
+# and fall back to waiting for the first content item instead.
+content_list = ""
+content_list_fallback = ".course-content__list"
+# Individual item: <div data-content-id="_XXXXXXX_1" class="root content-list-item ...">
+content_item = "[data-content-id]"
+content_item_fallback = ".content-list-item"
+# File download links
+file_link = "a[href*='/bbcswebdav/']"
+file_link_fallback = "[data-testid='file-attachment-link']"
+# Title: button inside item — data-analytics-id contains "content.item"
+# Fallback covers expanded banner modules whose title is in a heading, not a button
+content_item_title          = "[data-analytics-id*='content.item']"
+content_item_title_fallback = "h2, h3, h4, [id^='folder-title-']"
+# Expand/toggle button for folders: data-analytics-id="content.item.folder.toggleFolder.button"
+expand_button               = "[data-analytics-id='content.item.folder.toggleFolder.button']"
+expand_button_fallback      = "[id^='folder-title-']"
+
+[courses]
+# My Courses / institution page
+# Seneca Blackboard Ultra: each course is an <article data-course-id="...">
+item              = "article[data-course-id]"
+item_fallback     = "article[id^='course-list-course-']"
+# Course display name (id="course-name-<bbid>")
+name              = "[id^='course-name-']"
+name_fallback     = ".course-name"
+link              = "a[href*='/ultra/courses/']"
+# Course code text div (e.g. "BTS435NAA.06647.2261") — use inner_text, split on "."
+code              = ".multi-column-course-id"
+code_fallback     = "[id^='course-id-']"

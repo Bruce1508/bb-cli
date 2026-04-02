@@ -26,7 +26,7 @@ COURSES_PATH: str = "/ultra/course"
 MAX_STREAM_ITEMS: int = 20  # circuit breaker
 
 # Selectors file resolved relative to this file's location (project root / selectors/)
-_SELECTORS_PATH: Path = Path(__file__).parent.parent.parent / "selectors" / "blackboard_ultra.toml"
+_SELECTORS_PATH: Path = Path(__file__).parent.parent / "selectors" / "blackboard_ultra.toml"
 
 
 def _launch_browser(playwright_ctx, *, headless: bool):
