@@ -8,7 +8,7 @@ dist/
 *.egg-info/
 .coverage
 htmlcov/
-uv.lock
+# uv.lock intentionally tracked for reproducible CI installs
 **/.DS_Store
 # Note: ~/.bb/ is outside the repo — no gitignore entry needed
 
