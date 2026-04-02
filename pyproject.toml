@@ -1,5 +1,5 @@
 [project]
-name = "bb-cli"
+name = "blackboard-cli"
 version = "0.1.0"
 description = "Terminal CLI for Blackboard LMS — sync deadlines, grades, and announcements"
 requires-python = ">=3.11"
