@@ -23,3 +23,13 @@ def test_pyproject_has_project_urls():
     assert "Homepage" in urls, "Missing Homepage URL"
     assert "Repository" in urls, "Missing Repository URL"
     assert "Issues" in urls, "Missing Issues URL"
+
+
+def test_setup_browsers_command_exists():
+    """bb setup-browsers --help must exit 0 and mention chromium."""
+    from typer.testing import CliRunner
+    from bb.cli import app
+    runner = CliRunner()
+    result = runner.invoke(app, ["setup-browsers", "--help"])
+    assert result.exit_code == 0, f"exit code {result.exit_code}: {result.output}"
+    assert "chromium" in result.output.lower(), "Help text must mention chromium"

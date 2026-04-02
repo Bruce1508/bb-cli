@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import webbrowser
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -856,3 +857,11 @@ def mcp_server_cmd() -> None:
     """Start MCP server for Claude Desktop / Cursor integration (stdio transport)."""
     from bb.mcp.server import run
     run()
+
+
+@app.command("setup-browsers")
+def setup_browsers() -> None:
+    """Install Chromium browser required for Blackboard scraping (bb auth, bb sync)."""
+    result = subprocess.run(["playwright", "install", "chromium"], check=False)
+    if result.returncode != 0:
+        raise typer.Exit(1)
