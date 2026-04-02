@@ -48,3 +48,18 @@ def test_browser_missing_raises_runtime_error():
 
     with pytest.raises(RuntimeError, match="Chromium not found. Run: bb setup-browsers"):
         _launch_browser(mock_playwright, headless=True)
+
+
+def test_ci_workflow_file_exists():
+    """.github/workflows/ci.yml must exist."""
+    ci_path = _ROOT / ".github" / "workflows" / "ci.yml"
+    assert ci_path.exists(), f"CI workflow not found at {ci_path}"
+
+
+def test_ci_workflow_has_required_steps():
+    """CI workflow must contain lint (ruff check), test (pytest), and build (uv build) steps."""
+    ci_path = _ROOT / ".github" / "workflows" / "ci.yml"
+    content = ci_path.read_text()
+    assert "ruff check" in content, "CI must run ruff check"
+    assert "pytest" in content, "CI must run pytest"
+    assert "uv build" in content, "CI must run uv build"
