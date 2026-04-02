@@ -334,9 +334,19 @@ def run_chat(
     engine = ChatEngine(cfg)
 
     if engine.provider == "none":
-        con.print("[yellow]⚠ Ollama not available.[/yellow]")
-        con.print("• Start it: [bold]brew services start ollama[/bold]")
-        con.print("• Pull a model: [bold]ollama pull qwen3:30b-a3b[/bold]")
+        con.print("[yellow]⚠ No AI provider found. bb chat needs an LLM to work.[/yellow]")
+        con.print("")
+        con.print("[bold]Option 1 — Claude API (easiest, free tier available):[/bold]")
+        con.print("  1. Get a free API key at [link]https://console.anthropic.com[/link]")
+        con.print("  2. Add to ~/.bb/config.toml:")
+        con.print('       [ai]\n       provider = "claude"\n       api_key = "sk-ant-..."')
+        con.print("")
+        con.print("[bold]Option 2 — Ollama (free, runs fully offline):[/bold]")
+        con.print("  1. Install: [link]https://ollama.com[/link]")
+        con.print("  2. Pull a model: [bold]ollama pull qwen2.5:7b[/bold]  (~4.7 GB)")
+        con.print("  3. Run: [bold]ollama serve[/bold]")
+        con.print("")
+        con.print("Then restart bb chat.")
         return
 
     if query:
