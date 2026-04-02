@@ -127,10 +127,10 @@ def test_due_at_is_utc_aware_on_all_results():
 
 
 def test_date_only_dtstart_converted_to_midnight_utc():
-    """DTSTART;VALUE=DATE:20260328 → datetime(2026, 3, 28, 0, 0, tzinfo=utc)."""
+    """DTSTART;VALUE=DATE:20300328 → datetime(2030, 3, 28, 0, 0, tzinfo=utc)."""
     result = parse_ical(SAMPLE_ICS)
     oop = next(d for d in result if d.course == "OOP244")
-    assert oop.due_at == datetime(2026, 3, 28, 0, 0, 0, tzinfo=timezone.utc)
+    assert oop.due_at == datetime(2030, 3, 28, 0, 0, 0, tzinfo=timezone.utc)
 
 
 def test_naive_datetime_treated_as_local():

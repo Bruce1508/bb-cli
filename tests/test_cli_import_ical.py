@@ -128,7 +128,7 @@ def test_import_ical_writes_deadlines_to_db(tmp_path):
     _invoke_import(tmp_path)
     with Database(tmp_path / "bb.db") as db:
         db.setup()
-        deadlines = db.get_upcoming_deadlines(days=365)
+        deadlines = db.get_upcoming_deadlines(days=3650)
     assert len(deadlines) == EXPECTED_COUNT
 
 
