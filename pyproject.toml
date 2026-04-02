@@ -4,6 +4,17 @@ version = "0.1.0"
 description = "Terminal CLI for Blackboard LMS — sync deadlines, grades, and announcements"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Education",
+]
 dependencies = [
     "typer[all]>=0.12",
     "rich>=13.0",
@@ -16,10 +27,16 @@ dependencies = [
     "tomli-w>=1.0",
     "pdfplumber>=0.11",
     "ollama>=0.3",
+    "mcp>=1.12,<2.0",
 ]
 
 [project.scripts]
 bb = "bb.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/Bruce1508/bb-cli"
+Repository = "https://github.com/Bruce1508/bb-cli"
+Issues = "https://github.com/Bruce1508/bb-cli/issues"
 
 [build-system]
 requires = ["hatchling"]
