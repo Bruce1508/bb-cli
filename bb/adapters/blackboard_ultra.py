@@ -577,9 +577,9 @@ def _parse_content_item(el, sel: dict):
     """
     from bb.models.content import ContentItem
 
-    title_el = el.query_selector(sel.get("content_item_title", ".content-title")) or el.query_selector(
-        sel.get("content_item_title_fallback", "h2, h3, h4")
-    )
+    title_selector = sel.get("content_item_title", ".content-title")
+    fallback_selector = sel.get("content_item_title_fallback", "h2, h3, h4")
+    title_el = el.query_selector(title_selector) or el.query_selector(fallback_selector)
     title = title_el.inner_text().strip() if title_el else "Untitled"
 
     # Detect type — expand button presence is the most reliable signal for folders

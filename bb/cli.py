@@ -845,7 +845,7 @@ def open_item(
 
 @app.command()
 def chat(
-    query: Optional[str] = typer.Argument(None, help="Ask a single question (omit for interactive REPL)"),
+    query: Optional[str] = typer.Argument(None, help="Ask a single question (omit for REPL)"),
 ) -> None:
     """Chat with your AI assistant — ask about deadlines, grades, and course content."""
     from bb.ai.chat import run_chat
