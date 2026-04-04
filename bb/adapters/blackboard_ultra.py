@@ -115,21 +115,39 @@ class BlackboardUltraAdapter(LMSAdapter):
             try:
                 page.goto(
                     f"{self._lms_url}{STREAM_PATH}",
-                    wait_until="networkidle",
+                    wait_until="load",
                     timeout=STREAM_TIMEOUT_MS,
                 )
 
-                # Wait for the stream container — try primary selector then fallback
+                # Wait for the stream container — try primary selector then fallback.
+                # Not fatal: if neither appears the page may be a login redirect; we
+                # fall through with an empty elements list and save a snapshot.
                 container_sel = sel.get("container", "[data-testid='activity-stream-list']")
                 container_fallback = sel.get("container_fallback", ".activity-stream-container")
                 try:
                     page.wait_for_selector(container_sel, timeout=10_000)
                 except Exception:
-                    page.wait_for_selector(container_fallback, timeout=10_000)
+                    try:
+                        page.wait_for_selector(container_fallback, timeout=5_000)
+                    except Exception:
+                        pass  # fall through — snapshot will capture the actual page
+
+                # Wait for Angular to finish rendering stream items into the DOM.
+                # The container (#activity-stream) loads immediately but items are
+                # populated asynchronously via Angular API calls.
+                # Strategy: wait for any <li> (fires on nav items already in DOM),
+                # then sleep 8s so Angular has time to inject stream-item-containers.
+                # Directly waiting for li.stream-item-container times out because the
+                # class isn't present until Angular completes its XHR cycle.
+                item_sel = sel.get("item", "li.stream-item-container")
+                item_fallback = sel.get("item_fallback", ".stream-item-container")
+                try:
+                    page.wait_for_selector("li", timeout=15_000)
+                except Exception:
+                    pass  # if even generic li isn't found, page is likely a login redirect
+                page.wait_for_timeout(8_000)  # Angular XHR + render buffer
 
                 # Collect stream item elements — primary then fallback
-                item_sel = sel.get("item", "[data-testid='activity-stream-item']")
-                item_fallback = sel.get("item_fallback", ".stream-item")
                 elements = page.query_selector_all(item_sel)
                 if not elements:
                     elements = page.query_selector_all(item_fallback)
@@ -139,19 +157,174 @@ class BlackboardUltraAdapter(LMSAdapter):
                     if parsed is not None:
                         items.append(parsed)
 
-                # Capture page HTML for snapshot when 0 items scraped
-                self._last_page_html = page.content() if not items else None
-
             finally:
+                # Always capture page HTML — even on selector failure — so the
+                # snapshot shows exactly what the browser loaded (login page vs stream).
+                self._last_page_html = page.content() if not items else None
                 browser.close()
 
         return items
 
-    def fetch_grades(self) -> list[GradeItem]:
-        """Scrape the Blackboard Ultra Grades page and return typed GradeItem objects.
+    def fetch_announcements(self) -> list[Announcement]:
+        """Fetch course announcements via Blackboard REST API.
 
-        Navigates to /ultra/grades (headless), parses each grade row using
-        selectors from blackboard_ultra.toml.
+        Uses session cookies (no browser launch) to call:
+          GET /learn/api/public/v1/users/me/courses?expand=course
+          GET /learn/api/public/v1/courses/{id}/announcements?limit=50
+
+        Returns list[Announcement] across all enrolled courses.
+        Raises SessionError if the session file is missing or corrupt.
+        """
+        import re as _re_local
+        import httpx
+
+        state = self._sm.decrypt_session()  # raises SessionError if missing/corrupt
+        cookies = {c["name"]: c["value"] for c in state.get("cookies", [])}
+
+        announcements: list[Announcement] = []
+        base = self._lms_url
+
+        with httpx.Client(cookies=cookies, follow_redirects=True, timeout=20) as client:
+            # Step 1: get all enrolled courses
+            resp = client.get(f"{base}/learn/api/public/v1/users/me/courses?expand=course&limit=100")
+            if resp.status_code != 200:
+                return announcements
+            memberships = resp.json().get("results", [])
+
+            for membership in memberships:
+                course_data = membership.get("course", {})
+                internal_id = course_data.get("id", "")
+                if not internal_id:
+                    continue
+                # Extract base course code: "BTS435NAA.06647.2261" -> "BTS435NAA"
+                raw_code = course_data.get("courseId", "")
+                course_code = raw_code.split(".")[0].upper() if raw_code else "Unknown"
+
+                # Step 2: fetch announcements for this course
+                ann_resp = client.get(
+                    f"{base}/learn/api/public/v1/courses/{internal_id}/announcements?limit=50"
+                )
+                if ann_resp.status_code != 200:
+                    continue
+
+                for ann in ann_resp.json().get("results", []):
+                    title = ann.get("title", "").strip()
+                    # Skip "Added: X" entries — Blackboard auto-generates these when
+                    # content is added; Phase 5 (content tree scan) owns them with
+                    # the accurate content-creation timestamp.
+                    if not title or title.lower().startswith("added:"):
+                        continue
+                    body_html = ann.get("body", "")
+                    # Strip HTML tags for plain-text body storage
+                    body = _re_local.sub(r"<[^>]+>", " ", body_html).strip()
+                    body = _re_local.sub(r"\s+", " ", body)
+
+                    created_str = ann.get("created") or ann.get("modified") or ""
+                    try:
+                        posted_at = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                    except (ValueError, AttributeError):
+                        posted_at = datetime.now(timezone.utc)
+
+                    # Use Blackboard's stable announcement ID so re-syncing never duplicates
+                    bb_id = ann.get("id", created_str)
+                    announcements.append(
+                        Announcement(
+                            id=content_hash(course_code, title, bb_id),
+                            course=course_code,
+                            title=title,
+                            body=body,
+                            posted_at=posted_at,
+                            read_at=None,
+                        )
+                    )
+
+        return announcements
+
+    def fetch_content_additions(self, since: datetime) -> list[Announcement]:
+        """Find recently added course content via REST API content tree traversal.
+
+        For each enrolled course, walks the content tree up to 3 levels deep
+        and synthesizes Announcement objects for items whose `created` timestamp
+        is after `since`. This catches "Added: X" notifications that only appear
+        in the ephemeral activity stream — by reading the source data directly.
+
+        Raises SessionError if the session file is missing or corrupt.
+        """
+        import re as _re_local
+        import httpx
+
+        # Internal BB document-body nodes — not user-visible content items
+        _SKIP_TITLES = {"ultraDocumentBody", "ultraDocument"}
+        _FOLDER_HANDLERS = {"folder", "module", "lessonplan", "subheader"}
+
+        state = self._sm.decrypt_session()
+        cookies = {c["name"]: c["value"] for c in state.get("cookies", [])}
+        base = self._lms_url
+        announcements: list[Announcement] = []
+
+        def _scan(client: httpx.Client, cid: str, parent_id: str | None, depth: int) -> None:
+            if depth > 3:
+                return
+            url = (
+                f"{base}/learn/api/public/v1/courses/{cid}/contents/{parent_id}/children?limit=200"
+                if parent_id
+                else f"{base}/learn/api/public/v1/courses/{cid}/contents?limit=200"
+            )
+            r = client.get(url, timeout=15)
+            if r.status_code != 200:
+                return
+            for item in r.json().get("results", []):
+                title = item.get("title", "").strip()
+                if not title or title in _SKIP_TITLES:
+                    continue
+                handler = item.get("contentHandler", {}).get("id", "")
+                bb_item_id = item.get("id", "")
+                created_str = item.get("created", "")
+                if created_str:
+                    try:
+                        created_dt = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                        if created_dt > since:
+                            # Use Blackboard's stable content item ID — immune to timestamp drift
+                            announcements.append(
+                                Announcement(
+                                    id=content_hash(course_code, f"Added: {title}", bb_item_id),
+                                    course=course_code,
+                                    title=f"Added: {title}",
+                                    body="",
+                                    posted_at=created_dt,
+                                    read_at=None,
+                                )
+                            )
+                    except (ValueError, AttributeError):
+                        pass
+                # Recurse into folders/modules regardless of age
+                if any(x in handler for x in _FOLDER_HANDLERS):
+                    _scan(client, cid, item.get("id", ""), depth + 1)
+
+        with httpx.Client(cookies=cookies, follow_redirects=True, timeout=20) as client:
+            resp = client.get(
+                f"{base}/learn/api/public/v1/users/me/courses?expand=course&limit=100"
+            )
+            if resp.status_code != 200:
+                return announcements
+            for membership in resp.json().get("results", []):
+                course_data = membership.get("course", {})
+                cid = course_data.get("id", "")
+                if not cid:
+                    continue
+                raw_code = course_data.get("courseId", "")
+                course_code = raw_code.split(".")[0].upper() if raw_code else "Unknown"
+                _scan(client, cid, None, 0)
+
+        return announcements
+
+    def fetch_grades(self) -> list[GradeItem]:
+        """Scrape the Blackboard grades page and return typed GradeItem objects.
+
+        Navigates to /ultra/grades (headless). Supports two page layouts:
+        - Blackboard Learn (AngularJS): course sections via bb-base-grades-student,
+          grade rows via bb-student-column, course code from .course-number
+        - Blackboard Ultra: grade rows via [data-testid='grade-row'] (fallback)
 
         Raises SessionError if the session file is missing or corrupt.
         """
@@ -171,25 +344,83 @@ class BlackboardUltraAdapter(LMSAdapter):
             try:
                 page.goto(
                     f"{self._lms_url}{grades_path}",
-                    wait_until="networkidle",
+                    wait_until="load",
                     timeout=STREAM_TIMEOUT_MS,
                 )
 
-                row_sel = sel.get("grade_row", "[data-testid='grade-row']")
-                row_fallback = sel.get("grade_row_fallback", ".graded-item-row")
-                rows = page.query_selector_all(row_sel)
-                if not rows:
-                    rows = page.query_selector_all(row_fallback)
+                # Primary layout: AngularJS bb-base-grades-student sections
+                # Each section = one course; grade rows inside = bb-student-column
+                try:
+                    page.wait_for_selector("bb-base-grades-student", timeout=20_000)
+                except Exception:
+                    pass
 
-                for row in rows[:MAX_STREAM_ITEMS]:
-                    item = self._parse_grade_row(row, sel)
-                    if item is not None:
-                        items.append(item)
+                course_sections = page.query_selector_all("bb-base-grades-student")
+                if course_sections:
+                    for section in course_sections:
+                        code_el = section.query_selector(".course-number")
+                        if not code_el:
+                            continue
+                        raw_code = code_el.inner_text().strip()
+                        course = raw_code.split(".")[0].upper() if raw_code else "Unknown"
+
+                        rows = section.query_selector_all("bb-student-column")
+                        for row in rows[:MAX_STREAM_ITEMS]:
+                            item = self._parse_grade_row_ng(row, course)
+                            if item is not None:
+                                items.append(item)
+                else:
+                    # Fallback: Blackboard Ultra data-testid layout
+                    row_sel = sel.get("grade_row", "[data-testid='grade-row']")
+                    row_fallback = sel.get("grade_row_fallback", ".graded-item-row")
+                    try:
+                        page.wait_for_selector(row_sel, timeout=5_000)
+                    except Exception:
+                        try:
+                            page.wait_for_selector(row_fallback, timeout=5_000)
+                        except Exception:
+                            pass
+                    rows = page.query_selector_all(row_sel) or page.query_selector_all(row_fallback)
+                    for row in rows[:MAX_STREAM_ITEMS]:
+                        item = self._parse_grade_row(row, sel)
+                        if item is not None:
+                            items.append(item)
 
             finally:
                 browser.close()
 
         return items
+
+    def _parse_grade_row_ng(self, row: object, course: str) -> GradeItem | None:
+        """Parse one bb-student-column grade row from the AngularJS grades page.
+
+        Returns None if the row has no title (header/empty row).
+        """
+        title_el = row.query_selector("a.bb-click-target") or row.query_selector(
+            ".js-gradable-item-link a"
+        )
+        if title_el is None:
+            return None
+        title = title_el.inner_text().strip()
+        if not title:
+            return None
+
+        score_el = row.query_selector(".grade-input-display")
+        score, out_of = None, None
+        if score_el:
+            score_text = score_el.inner_text().strip() or score_el.text_content().strip()
+            score, out_of = _parse_grade_badge(score_text)
+
+        status = "graded" if score is not None else "pending"
+
+        return GradeItem(
+            id=content_hash(course, title, ""),
+            course=course,
+            item=title,
+            score=score,
+            out_of=out_of,
+            status=status,
+        )
 
     def _parse_grade_row(self, row: object, sel: dict) -> GradeItem | None:
         """Parse one grades-page row into a GradeItem.
@@ -432,9 +663,12 @@ class BlackboardUltraAdapter(LMSAdapter):
                 or elem.query_selector(".attempt-grade")
                 or elem.query_selector("[class*='grade-pill']")
                 or elem.query_selector("[class*='grade-value']")
+                or elem.query_selector(".grade-input-display")
             )
+            # Use text_content() not inner_text(): grade badge is inside ng-hide
+            # (display:none) so inner_text() returns ""; text_content() ignores CSS.
             score, out_of = (
-                _parse_grade_badge(badge_elem.inner_text().strip())
+                _parse_grade_badge(badge_elem.text_content().strip())
                 if badge_elem else (None, None)
             )
             return GradeItem(

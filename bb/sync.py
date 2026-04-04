@@ -70,6 +70,43 @@ def sync_stream(adapter: object, db: Database) -> tuple[int, int, int]:
     return d_new, a_new, g_new
 
 
+def sync_announcements(adapter: object, db: Database) -> int:
+    """Fetch course announcements via REST API, upsert to DB.
+
+    Returns announcements_new count.
+    Raises SessionError if the session is expired or missing.
+    """
+    items = adapter.fetch_announcements()
+    new = 0
+    for item in items:
+        if isinstance(item, Announcement):
+            if db.upsert_announcement(item):
+                new += 1
+    return new
+
+
+def sync_content_additions(adapter: object, db: Database, lookback_days: int = 14) -> int:
+    """Find recently added course content via content tree traversal, upsert to DB.
+
+    Uses a lookback window (default 14 days) so we catch items added before the
+    last sync but after the announcements API's cutoff. The content_hash ensures
+    no duplicates even if this phase runs on every sync.
+
+    Returns announcements_new count.
+    Raises SessionError if the session is expired or missing.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    since = datetime.now(timezone.utc) - timedelta(days=lookback_days)
+    items = adapter.fetch_content_additions(since)
+    new = 0
+    for item in items:
+        if isinstance(item, Announcement):
+            if db.upsert_announcement(item):
+                new += 1
+    return new
+
+
 def sync_grades(adapter: object, db: Database) -> int:
     """Scrape the Grades page via adapter, upsert all grade items to DB.
 

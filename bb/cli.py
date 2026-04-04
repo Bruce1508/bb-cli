@@ -320,7 +320,7 @@ def sync(
     """Sync deadlines, announcements, and grades from Blackboard."""
     from bb.adapters.blackboard_ultra import BlackboardUltraAdapter
     from bb.security.session import SessionError, SessionManager
-    from bb.sync import sync_ical, sync_stream
+    from bb.sync import sync_announcements, sync_content_additions, sync_grades, sync_ical, sync_stream
 
     cfg = load_config()
     BB_DIR = _config_module.BB_DIR
@@ -413,6 +413,55 @@ def sync(
         with Database(db_path) as db:
             db.setup()
             db.log_sync("stream", 0, 0, error=str(exc))
+
+    # --- Phase 3: Grades page (catches grades not in activity stream) ---
+    if not ical_only and not dry_run:
+        console.print("⟳ Phase 3: Grades page...")
+        sm3 = SessionManager(BB_DIR / "session.enc")
+        adapter3 = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm3)
+        try:
+            with Database(db_path) as db:
+                db.setup()
+                g_new3 = sync_grades(adapter3, db)
+                db.log_sync("grades", g_new3, 0)
+            total_new += g_new3
+            console.print(f"[green]✔[/green] {g_new3} grades new from grades page")
+        except SessionError:
+            console.print("[yellow]⚠[/yellow] Session expired — run [bold]bb auth[/bold].")
+        except Exception as exc:
+            console.print(f"[yellow]⚠[/yellow] Grades page sync failed: {exc}")
+
+    # --- Phase 4: Course Announcements (REST API — no browser needed) ---
+    console.print("⟳ Phase 4: Course announcements...")
+    sm4 = SessionManager(BB_DIR / "session.enc")
+    adapter4 = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm4)
+    try:
+        with Database(db_path) as db:
+            db.setup()
+            a_new4 = sync_announcements(adapter4, db)
+            db.log_sync("announcements", a_new4, 0)
+        total_new += a_new4
+        console.print(f"[green]✔[/green] {a_new4} announcements new")
+    except SessionError:
+        console.print("[yellow]⚠[/yellow] Session expired — run [bold]bb auth[/bold].")
+    except Exception as exc:
+        console.print(f"[yellow]⚠[/yellow] Announcements sync failed: {exc}")
+
+    # --- Phase 5: Course Content Additions (REST API, 14-day lookback) ---
+    console.print("⟳ Phase 5: Content additions...")
+    sm5 = SessionManager(BB_DIR / "session.enc")
+    adapter5 = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm5)
+    try:
+        with Database(db_path) as db:
+            db.setup()
+            c_new5 = sync_content_additions(adapter5, db)
+            db.log_sync("content", c_new5, 0)
+        total_new += c_new5
+        console.print(f"[green]✔[/green] {c_new5} content additions new")
+    except SessionError:
+        console.print("[yellow]⚠[/yellow] Session expired — run [bold]bb auth[/bold].")
+    except Exception as exc:
+        console.print(f"[yellow]⚠[/yellow] Content scan failed: {exc}")
 
     # --- Notify ---
     if total_new > 0:
