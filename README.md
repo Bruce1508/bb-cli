@@ -84,7 +84,7 @@ You: /sync
 ```
 
 **AI providers** (auto-detected, in priority order):
-1. **Ollama** (free, private, offline) — install from [ollama.com](https://ollama.com), then `ollama pull qwen2.5:7b`
+1. **Ollama** (free, private, offline) — install from [ollama.com](https://ollama.com), then `ollama pull qwen3:30b-a3b`
 2. **Claude API** — set `[ai] provider = "claude"` and `api_key = "sk-..."` in `~/.bb/config.toml`
 3. **OpenAI API** — set `[ai] provider = "openai"` and `api_key = "sk-..."` in `~/.bb/config.toml`
 
@@ -122,7 +122,7 @@ adapter = "blackboard_ultra"
 
 [ai]
 provider = "ollama"          # ollama | claude | openai
-model = "qwen2.5:7b"         # for Ollama
+model = "qwen3:30b-a3b"         # for Ollama
 
 [notifications]
 providers = ["terminal"]     # terminal | ntfy | telegram | discord
