@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/Bruce1508/bb-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Bruce1508/bb-cli/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/blackboard-cli.svg)](https://pypi.org/project/blackboard-cli/)
+[![Downloads](https://img.shields.io/pypi/dw/blackboard-cli.svg)](https://pypi.org/project/blackboard-cli/)
 [![Python](https://img.shields.io/pypi/pyversions/blackboard-cli.svg)](https://pypi.org/project/blackboard-cli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -19,18 +20,25 @@ $ bb chat "what do I have due this week?"
 
 ## Install
 
+### Step 1: Install the package
+
 ```bash
 pip install blackboard-cli
-bb setup-browsers   # install Chromium for Blackboard scraping (one-time)
 ```
 
 > **Requires Python 3.11+** — check with `python3 --version`.
-> Don't have it? Download from [python.org/downloads](https://www.python.org/downloads/) (macOS/Windows)
-> or run `brew install python@3.11` (macOS with Homebrew).
+> Don't have it? Download from [python.org/downloads](https://www.python.org/downloads/) or run `brew install python@3.11` (macOS).
 
----
+### Step 2: Install the browser
 
-## Quick Start
+> **Important:** `bb auth` and `bb sync` require a Chromium browser to scrape Blackboard.
+> Run this once after install — it downloads ~170 MB.
+
+```bash
+bb setup-browsers
+```
+
+### Step 3: Set up and sync
 
 ```bash
 bb init    # first-time setup — LMS URL, notification preferences, AI provider
@@ -39,6 +47,8 @@ bb sync    # sync deadlines, grades, and announcements
 bb due     # show what's coming up
 bb chat    # open the AI assistant
 ```
+
+**That's it!** You now have your deadlines, grades, and announcements in your terminal — and an AI that knows all of it.
 
 ---
 
@@ -65,7 +75,7 @@ bb chat    # open the AI assistant
 
 ## `bb chat` — Ask your AI anything
 
-`bb chat` is an interactive AI assistant that knows your real Blackboard data. It never makes up grades or deadlines — it queries your local database.
+`bb chat` is an interactive AI assistant that knows your real Blackboard data. It never makes up grades or deadlines — it queries your local database. Responses stream token-by-token so you see answers immediately.
 
 ```bash
 $ bb chat
@@ -150,6 +160,15 @@ bb auto-setup --disable # removes the scheduler
 ```
 
 Default: syncs every 4 hours silently in the background.
+
+---
+
+## Known Limitations
+
+- **Blackboard Ultra only** — Canvas, Moodle, and Brightspace adapters are planned for v0.2
+- **`bb download` requires direct file links** — courses using Blackboard's "Document" page format will show "no downloadable files". Use `bb open <COURSE> <item>` to open those in your browser instead
+- **Session expires ~24h** — re-run `bb auth` when prompted
+- **Windows** — core commands work, but native desktop notifications are not supported (use ntfy or Telegram instead)
 
 ---
 
