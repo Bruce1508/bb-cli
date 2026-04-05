@@ -257,37 +257,36 @@ def test_process_turn_no_provider(monkeypatch):
 
 
 def test_ollama_turn_plain_response(monkeypatch):
-    """process_turn returns text when LLM responds without tool calls."""
+    """process_turn calls _stream_answer and returns '' sentinel when no tool calls."""
     import sys
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock, patch
     from bb.config import BBConfig
 
     mock_msg = MagicMock()
     mock_msg.content = "You have 3 upcoming deadlines."
     mock_msg.tool_calls = None
 
-    mock_response = MagicMock()
-    mock_response.message = mock_msg
-
     mock_ollama_pkg = MagicMock()
     m1 = MagicMock()
     m1.model = "qwen3:8b"
     mock_ollama_pkg.list.return_value = MagicMock(models=[m1])
-    mock_ollama_pkg.chat.return_value = mock_response
+    mock_ollama_pkg.chat.return_value = MagicMock(message=mock_msg)
 
     monkeypatch.setitem(sys.modules, "ollama", mock_ollama_pkg)
     monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
 
     from bb.ai.chat import ChatEngine
     engine = ChatEngine(BBConfig())
-    result = engine.process_turn("what are my deadlines?")
-    assert result == "You have 3 upcoming deadlines."
+    with patch.object(engine, "_stream_answer", return_value="You have 3 upcoming deadlines."):
+        result = engine.process_turn("what are my deadlines?")
+    # Streaming path: answer is rendered live; process_turn returns "" sentinel
+    assert result == ""
 
 
 def test_ollama_turn_tool_call_dispatched(monkeypatch):
-    """process_turn executes tool calls and returns final LLM response."""
+    """process_turn executes tool calls then calls _stream_answer for the final response."""
     import sys
-    from unittest.mock import MagicMock, call
+    from unittest.mock import MagicMock, patch
     from bb.config import BBConfig
 
     # First response: has a tool call
@@ -299,7 +298,7 @@ def test_ollama_turn_tool_call_dispatched(monkeypatch):
     msg_with_tool.content = ""
     msg_with_tool.tool_calls = [tc]
 
-    # Second response: plain text after tool result injected
+    # Second response: plain text after tool result injected → triggers _stream_answer
     msg_final = MagicMock()
     msg_final.content = "Your courses are: BTP200, OPS445."
     msg_final.tool_calls = None
@@ -318,9 +317,10 @@ def test_ollama_turn_tool_call_dispatched(monkeypatch):
 
     from bb.ai.chat import ChatEngine
     engine = ChatEngine(BBConfig())
-    result = engine.process_turn("list my courses")
+    with patch.object(engine, "_stream_answer", return_value="Your courses are: BTP200, OPS445."):
+        result = engine.process_turn("list my courses")
 
-    assert result == "Your courses are: BTP200, OPS445."
+    assert result == ""  # streaming sentinel
     assert mock_ollama_pkg.chat.call_count == 2
     # A tool result message should be in history
     roles = [m["role"] for m in engine._msgs]
@@ -332,23 +332,39 @@ def test_ollama_turn_tool_call_dispatched(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def _make_mock_ollama_module(model: str = "qwen3:8b", response_text: str = "answer"):
-    """Return a mock ollama module that returns response_text on chat()."""
+    """Return a mock ollama module that handles both streaming and non-streaming calls.
+
+    Non-streaming call (tools=..., no stream kwarg): returns a response with .message.
+    Streaming call (stream=True): returns an iterator of one chunk with the response text.
+    """
     from unittest.mock import MagicMock
+
     mock_msg = MagicMock()
     mock_msg.content = response_text
     mock_msg.tool_calls = None
+
     m1 = MagicMock()
     m1.model = model
     mock_pkg = MagicMock()
     mock_pkg.list.return_value = MagicMock(models=[m1])
-    mock_pkg.chat.return_value = MagicMock(message=mock_msg)
+
+    chunk = MagicMock()
+    chunk.message.content = response_text
+
+    def chat_side_effect(*args, **kwargs):
+        if kwargs.get("stream"):
+            return iter([chunk])
+        return MagicMock(message=mock_msg)
+
+    mock_pkg.chat.side_effect = chat_side_effect
     return mock_pkg
 
 
-def test_run_chat_single_shot_prints_response(monkeypatch, capsys):
-    """Single-shot mode prints the LLM response and returns."""
+def test_run_chat_single_shot_prints_response(monkeypatch):
+    """Single-shot mode streams the LLM response to console via _stream_answer."""
     import sys
     from io import StringIO
+    from unittest.mock import patch
     from rich.console import Console
     mock_pkg = _make_mock_ollama_module(response_text="3 deadlines coming up.")
     monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
@@ -356,9 +372,16 @@ def test_run_chat_single_shot_prints_response(monkeypatch, capsys):
 
     buf = StringIO()
     con = Console(file=buf, highlight=False)
-    from bb.ai.chat import run_chat
+
+    def fake_stream(_self, _con, _ollama, think):
+        # Simulate streaming writing directly to console (as the real method does)
+        _con.print("bb: 3 deadlines coming up.")
+        return ""
+
+    from bb.ai.chat import run_chat, ChatEngine
     from bb.config import BBConfig
-    run_chat(query="how many deadlines?", cfg=BBConfig(), console=con)
+    with patch.object(ChatEngine, "_stream_answer", fake_stream):
+        run_chat(query="how many deadlines?", cfg=BBConfig(), console=con)
     output = buf.getvalue()
     assert "3 deadlines coming up." in output
 
