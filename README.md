@@ -1,6 +1,5 @@
 # bb-cli — Blackboard for your terminal
 
-[![CI](https://github.com/Bruce1508/bb-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/Bruce1508/bb-cli/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/blackboard-cli.svg)](https://pypi.org/project/blackboard-cli/)
 [![Python](https://img.shields.io/pypi/pyversions/blackboard-cli.svg)](https://pypi.org/project/blackboard-cli/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -84,7 +83,7 @@ You: /sync
 ```
 
 **AI providers** (auto-detected, in priority order):
-1. **Ollama** (free, private, offline) — install from [ollama.com](https://ollama.com), then `ollama pull qwen3:30b-a3b`
+1. **Ollama** (free, private, offline) — install from [ollama.com](https://ollama.com), then `ollama pull qwen3:8b`
 2. **Claude API** — set `[ai] provider = "claude"` and `api_key = "sk-..."` in `~/.bb/config.toml`
 3. **OpenAI API** — set `[ai] provider = "openai"` and `api_key = "sk-..."` in `~/.bb/config.toml`
 
@@ -116,16 +115,15 @@ Claude Desktop will now have access to all 13 bb-cli tools: deadlines, grades, a
 `~/.bb/config.toml` is created by `bb init`. Example:
 
 ```toml
-[lms]
-url = "https://your-school.blackboard.com"
-adapter = "blackboard_ultra"
+lms_type = "blackboard_ultra"
+lms_url  = "https://your-school.blackboard.com"
 
 [ai]
-provider = "ollama"          # ollama | claude | openai
-model = "qwen3:30b-a3b"         # for Ollama
+provider = "ollama"    # ollama | claude | openai
+model    = "qwen3:8b"  # for Ollama
 
-[notifications]
-providers = ["terminal"]     # terminal | ntfy | telegram | discord
+[notification]
+provider = "terminal"  # terminal | ntfy | telegram | discord
 ```
 
 ---
