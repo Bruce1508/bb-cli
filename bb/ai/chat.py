@@ -130,6 +130,22 @@ _TOOL_LABELS: dict[str, str] = {
 }
 
 
+def _strip_think(text: str) -> str:
+    """Remove thinking blocks that Qwen3 and similar models emit.
+
+    Handles two cases:
+    - Full <think>...</think> block in content
+    - Orphaned </think> (Ollama strips the opening tag but leaves the body + closing tag)
+    """
+    import re
+    # Full block case
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
+    # Orphaned closing tag — everything before </think> is thinking noise
+    if "</think>" in text:
+        text = text.split("</think>", 1)[-1]
+    return text.strip()
+
+
 def _tool_label(name: str) -> str:
     return _TOOL_LABELS.get(name, f"Running {name}")
 
@@ -236,6 +252,38 @@ class ChatEngine:
             "Then restart bb chat."
         )
 
+    def _stream_answer(self, con: "Console", _ollama: object, think: bool) -> str:  # noqa: F821
+        """Stream the final answer token-by-token, rendering live to the console.
+
+        Uses Rich Live so tokens appear immediately. The "bb: " prefix is included
+        inside the Live render so it moves with the text as it grows. Tools are
+        disabled on this call — the model is answering, not calling tools.
+        <think> blocks are stripped on every refresh so thinking noise never shows.
+
+        Returns the complete stripped text (for history storage).
+        """
+        from rich.live import Live
+        from rich.text import Text
+
+        chunks: list[str] = []
+
+        with Live(Text("bb: "), console=con, refresh_per_second=15, transient=False) as live:
+            for chunk in _ollama.chat(
+                model=self.model,
+                messages=self._msgs,
+                tools=[],
+                think=think,
+                stream=True,
+            ):
+                token = (chunk.message.content or "") if chunk.message else ""
+                if token:
+                    chunks.append(token)
+                    visible = _strip_think("".join(chunks))
+                    live.update(Text(f"bb: {visible}"))
+
+        con.print()  # blank line after streamed output
+        return _strip_think("".join(chunks))
+
     def _ollama_turn(self, user_input: str, console: "Console | None") -> str:
         try:
             import ollama as _ollama
@@ -252,6 +300,8 @@ class ChatEngine:
 
         try:
             for _ in range(MAX_TOOL_ROUNDS):
+                # Every round offers the full tool list. The model decides whether to call
+                # tools — we don't restrict after round 0 (that broke multi-step tool calls).
                 with Status("⟳ Thinking...", console=con, spinner="dots"):
                     response = _ollama.chat(
                         model=self.model,
@@ -260,13 +310,17 @@ class ChatEngine:
                         think=think,
                     )
                 msg = response.message
-                msg_dict: dict = {"role": "assistant", "content": msg.content or ""}
 
                 if not msg.tool_calls:
-                    self._msgs.append(msg_dict)
-                    response_text = msg.content or ""
+                    # Final answer — stream it so tokens appear live.
+                    # _stream_answer renders directly to console and returns the full text.
+                    # We do NOT append to self._msgs before streaming: if _stream_answer raises,
+                    # the except block's pop() will correctly target the user message, not a
+                    # half-committed assistant message.
+                    response_text = self._stream_answer(con, _ollama, think)
+                    self._msgs.append({"role": "assistant", "content": response_text})
                     self._save_history(user_input, response_text)
-                    return response_text
+                    return ""  # already rendered; signal run_chat not to print again
 
                 # Decode arguments once, then use for both history and dispatch
                 decoded_calls = []
@@ -280,11 +334,14 @@ class ChatEngine:
                     call_id = getattr(tc, "id", None) or tc.function.name
                     decoded_calls.append((tc.function.name, args, call_id))
 
-                msg_dict["tool_calls"] = [
-                    {"id": call_id, "function": {"name": name, "arguments": args}}
-                    for name, args, call_id in decoded_calls
-                ]
-                self._msgs.append(msg_dict)
+                self._msgs.append({
+                    "role": "assistant",
+                    "content": msg.content or "",
+                    "tool_calls": [
+                        {"id": call_id, "function": {"name": name, "arguments": args}}
+                        for name, args, call_id in decoded_calls
+                    ],
+                })
 
                 for name, args, call_id in decoded_calls:
                     con.print(f"[dim]🔧 {_tool_label(name)}...[/dim]")
@@ -298,8 +355,17 @@ class ChatEngine:
             limit_msg = "I reached my limit processing your request. Please try a simpler question."
             self._msgs.append({"role": "assistant", "content": limit_msg})
             return limit_msg
-        except Exception:
+        except Exception as exc:
             self._msgs.pop()  # remove the user message so history stays consistent
+            # Surface Ollama-specific errors as readable messages rather than tracebacks
+            err = str(exc)
+            if "model runner has unexpectedly stopped" in err or "500" in err:
+                return (
+                    "The local AI model crashed — likely ran out of memory. "
+                    "Try restarting Ollama (`ollama serve`) or switching to a smaller model."
+                )
+            if "connection" in err.lower() or "connect" in err.lower():
+                return "Cannot reach Ollama. Is it running? Try: `ollama serve`"
             raise
 
 
@@ -353,7 +419,8 @@ def run_chat(
         # Single-shot mode
         con.print(f"[dim]({engine.get_provider_display()})[/dim]")
         response = engine.process_turn(query, console=con)
-        con.print(response)
+        if response:  # "" means streaming already rendered the answer
+            con.print(response)
         return
 
     # Interactive REPL
@@ -380,7 +447,9 @@ def run_chat(
             continue
 
         response = engine.process_turn(user_input, console=con)
-        con.print(f"\n[bold cyan]bb:[/bold cyan] {response}\n")
+        if response:
+            # Non-streaming path: error messages, limit notices, etc.
+            con.print(f"\n[bold cyan]bb:[/bold cyan] {response}\n")
 
 
 def _handle_slash(cmd_line: str, engine: "ChatEngine", con: "Console") -> bool:

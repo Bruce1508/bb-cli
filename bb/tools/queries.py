@@ -121,7 +121,7 @@ def get_announcements(course: str | None = None, unread: bool = False) -> list[d
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
-            announcements = db.get_recent_announcements(limit=50)
+            announcements = db.get_recent_announcements(limit=15)
     except Exception:
         return []
 

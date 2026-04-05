@@ -52,8 +52,8 @@ wheels = [
 ]
 
 [[package]]
-name = "bb-cli"
-version = "0.1.0"
+name = "blackboard-cli"
+version = "0.1.4"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
