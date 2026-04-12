@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 import webbrowser
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -21,6 +22,18 @@ from bb.parsers.ical import ICalParseError, parse_ical
 
 app = typer.Typer(help="bb — Blackboard LMS terminal client")
 console = Console()
+
+
+def _warn_if_session_stale() -> None:
+    """Print a one-line warning if session is expired or uncertain."""
+    from bb.security.session import SessionManager
+    BB_DIR = _config_module.BB_DIR
+    sm = SessionManager(BB_DIR / "session.enc")
+    age = sm.check_session_age()
+    if age == "expired":
+        console.print("[yellow]⚠ Session may be expired — run [bold]bb auth[/bold] for fresh data.[/yellow]")
+    elif age == "uncertain":
+        console.print("[dim]⚠ Session age uncertain — data may be stale. Run bb sync to refresh.[/dim]")
 
 
 @app.command()
@@ -152,6 +165,8 @@ def due(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON array"),
 ) -> None:
     """Show upcoming deadlines."""
+    if not output_json:
+        _warn_if_session_stale()
     BB_DIR = _config_module.BB_DIR
     with Database(BB_DIR / "bb.db") as db:
         db.setup()
@@ -330,6 +345,7 @@ def sync(
     # --- Phase 0: Build course map (skipped if --ical-only) ---
     if not ical_only:
         console.print("⟳ Phase 0: Discovering courses...")
+        _t0 = time.monotonic()
         try:
             sm0 = SessionManager(BB_DIR / "session.enc")
             adapter0 = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm0)
@@ -338,7 +354,7 @@ def sync(
                 db.setup()
                 for c in course_list:
                     db.upsert_course_map(c["code"], c["bb_id"], c["name"])
-            console.print(f"[green]✔[/green] {len(course_list)} courses mapped")
+            console.print(f"[green]✔[/green] {len(course_list)} courses mapped [{time.monotonic()-_t0:.1f}s]")
         except Exception as exc:
             console.print(f"[yellow]⚠[/yellow] Course discovery failed: {exc} (sync continues)")
 
@@ -360,13 +376,14 @@ def sync(
             except Exception as exc:
                 console.print(f"[yellow]⚠[/yellow] iCal fetch failed: {exc}")
             return
+        _t1 = time.monotonic()
         try:
             with Database(db_path) as db:
                 db.setup()
                 new, updated = sync_ical(cfg.ical_url, db)
                 db.log_sync("ical", new, updated)
             total_new += new
-            console.print(f"[green]✔[/green] {new + updated} deadlines ({new} new)")
+            console.print(f"[green]✔[/green] {new + updated} deadlines ({new} new) [{time.monotonic()-_t1:.1f}s]")
         except Exception as exc:
             console.print(f"[yellow]⚠[/yellow] iCal sync failed: {exc}")
             with Database(db_path) as db:
@@ -380,6 +397,7 @@ def sync(
 
     # --- Phase 2: Activity Stream ---
     console.print("⟳ Phase 2: Activity Stream...")
+    _t2 = time.monotonic()
     sm = SessionManager(BB_DIR / "session.enc")
     adapter = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm)
     try:
@@ -390,7 +408,7 @@ def sync(
             db.log_sync("stream", stream_new, 0)
         total_new += stream_new
         console.print(
-            f"[green]✔[/green] {d_new} deadlines, {a_new} announcements, {g_new} grades new"
+            f"[green]✔[/green] {d_new} deadlines, {a_new} announcements, {g_new} grades new [{time.monotonic()-_t2:.1f}s]"
         )
     except SessionError:
         console.print(
@@ -417,6 +435,7 @@ def sync(
     # --- Phase 3: Grades page (catches grades not in activity stream) ---
     if not ical_only and not dry_run:
         console.print("⟳ Phase 3: Grades page...")
+        _t3 = time.monotonic()
         sm3 = SessionManager(BB_DIR / "session.enc")
         adapter3 = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm3)
         try:
@@ -425,7 +444,7 @@ def sync(
                 g_new3 = sync_grades(adapter3, db)
                 db.log_sync("grades", g_new3, 0)
             total_new += g_new3
-            console.print(f"[green]✔[/green] {g_new3} grades new from grades page")
+            console.print(f"[green]✔[/green] {g_new3} grades new from grades page [{time.monotonic()-_t3:.1f}s]")
         except SessionError:
             console.print("[yellow]⚠[/yellow] Session expired — run [bold]bb auth[/bold].")
         except Exception as exc:
@@ -433,6 +452,7 @@ def sync(
 
     # --- Phase 4: Course Announcements (REST API — no browser needed) ---
     console.print("⟳ Phase 4: Course announcements...")
+    _t4 = time.monotonic()
     sm4 = SessionManager(BB_DIR / "session.enc")
     adapter4 = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm4)
     try:
@@ -441,7 +461,7 @@ def sync(
             a_new4 = sync_announcements(adapter4, db)
             db.log_sync("announcements", a_new4, 0)
         total_new += a_new4
-        console.print(f"[green]✔[/green] {a_new4} announcements new")
+        console.print(f"[green]✔[/green] {a_new4} announcements new [{time.monotonic()-_t4:.1f}s]")
     except SessionError:
         console.print("[yellow]⚠[/yellow] Session expired — run [bold]bb auth[/bold].")
     except Exception as exc:
@@ -449,6 +469,7 @@ def sync(
 
     # --- Phase 5: Course Content Additions (REST API, 14-day lookback) ---
     console.print("⟳ Phase 5: Content additions...")
+    _t5 = time.monotonic()
     sm5 = SessionManager(BB_DIR / "session.enc")
     adapter5 = BlackboardUltraAdapter(lms_url=cfg.lms_url, session_manager=sm5)
     try:
@@ -457,7 +478,7 @@ def sync(
             c_new5 = sync_content_additions(adapter5, db)
             db.log_sync("content", c_new5, 0)
         total_new += c_new5
-        console.print(f"[green]✔[/green] {c_new5} content additions new")
+        console.print(f"[green]✔[/green] {c_new5} content additions new [{time.monotonic()-_t5:.1f}s]")
     except SessionError:
         console.print("[yellow]⚠[/yellow] Session expired — run [bold]bb auth[/bold].")
     except Exception as exc:
@@ -506,6 +527,8 @@ def grades(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON array"),
 ) -> None:
     """Show grades from the database."""
+    if not output_json:
+        _warn_if_session_stale()
     BB_DIR = _config_module.BB_DIR
     with Database(BB_DIR / "bb.db") as db:
         db.setup()
@@ -575,6 +598,7 @@ def ann(
     unread: bool = typer.Option(False, "--unread", help="Show only unread announcements"),
 ) -> None:
     """Show recent announcements."""
+    _warn_if_session_stale()
     BB_DIR = _config_module.BB_DIR
     with Database(BB_DIR / "bb.db") as db:
         db.setup()

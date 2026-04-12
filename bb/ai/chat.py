@@ -428,11 +428,19 @@ def run_chat(
         f"[bold cyan]🤖 bb-cli AI[/bold cyan] [dim]— "
         f"Your Blackboard assistant ({engine.get_provider_display()})[/dim]"
     )
-    con.print("[dim]Type '/exit' to quit, '/help' for commands[/dim]\n")
+    con.print("[dim]Type '/exit' to quit, '/help' for commands[/dim]")
+
+    # First-run hint: show example queries when there is no prior history
+    if len(engine._msgs) == 1:  # only system prompt = fresh session
+        con.print(
+            "[dim]  Try: 'what's due this week?' · 'any new announcements?' · 'show my grades'[/dim]"
+        )
+    con.print()
 
     while True:
         try:
-            user_input = con.input("[bold]You:[/bold] ").strip()
+            prompt_label = "[bold]You [think]:[/bold]" if engine._cfg.ai.think else "[bold]You:[/bold]"
+            user_input = con.input(prompt_label + " ").strip()
         except (EOFError, KeyboardInterrupt):
             con.print("\n👋 See you later!")
             break
