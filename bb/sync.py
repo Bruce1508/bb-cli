@@ -7,6 +7,7 @@ import httpx
 from bb.adapters.base import Announcement, Deadline, GradeItem
 from bb.db import Database
 from bb.parsers.ical import parse_ical
+from bb.security.session import SessionError, SessionManager
 
 _ICAL_MAX_RETRIES = 3
 _ICAL_BACKOFF_BASE = 2  # seconds; delay = base ** attempt (2, 4, 8)
@@ -127,6 +128,31 @@ def sync_grades(adapter: object, db: Database) -> int:
                 seen_courses.add(item.course)
                 db.upsert_course_map(item.course, "", "")
     return new
+
+
+def preflight_session(sm: SessionManager, lms_url: str, db: "Database | None" = None) -> None:
+    """Validate session liveness before any Playwright scraping begins.
+
+    - fresh   → return immediately (still within FRESH_THRESHOLD)
+    - uncertain → probe the LMS REST API; if live, touch() to reset mtime and log
+                  session_verified; if dead, raise SessionError with 'run bb auth' guidance
+    - expired  → raise SessionError immediately (skip the probe to avoid noise)
+
+    Pass db to record a session_verified event on successful touch() so bb status
+    can display "Last verified: [timestamp]".
+    """
+    status = sm.check_session_age()
+    if status == "fresh":
+        return
+    if status == "expired":
+        raise SessionError("Session expired — run 'bb auth' to re-authenticate.")
+    # uncertain: verify with a lightweight REST call
+    if sm.verify_live(lms_url):
+        sm.touch()
+        if db is not None:
+            db.log_notification("session_verified")
+    else:
+        raise SessionError("Session probe failed — run 'bb auth' to re-authenticate.")
 
 
 # ------------------------------------------------------------------

@@ -6,7 +6,9 @@ import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urljoin
 
+import httpx
 import keyring
 import keyring.errors
 from cryptography.fernet import Fernet, InvalidToken
@@ -89,6 +91,35 @@ class SessionManager:
     def delete_session(self) -> None:
         """Remove the session file. No-op if it does not exist."""
         self._path.unlink(missing_ok=True)
+
+    def verify_live(self, lms_url: str) -> bool:
+        """Probe the LMS API with current cookies — return True only on HTTP 200.
+
+        Uses the same cookie extraction pattern as fetch_announcements. Never raises;
+        any exception (network error, missing session, bad response) returns False.
+        Timeout capped at 10 s to avoid blocking sync.
+        """
+        try:
+            state = self.decrypt_session()
+        except (SessionError, Exception):
+            return False
+        try:
+            cookies = {c["name"]: c["value"] for c in state.get("cookies", [])}
+            url = urljoin(lms_url.rstrip("/") + "/", "learn/api/public/v1/users/me")
+            with httpx.Client(timeout=10.0, follow_redirects=False) as client:
+                r = client.get(url, cookies=cookies)
+            return r.status_code == 200
+        except Exception:
+            return False
+
+    def touch(self) -> None:
+        """Re-encrypt the current session to disk, bumping the file mtime.
+
+        This is the authoritative mtime update — only call after verify_live() == True.
+        Lets SessionError propagate so the caller knows the session is unreadable.
+        """
+        state = self.decrypt_session()
+        self.encrypt_session(state)
 
     def get_key(self) -> bytes:
         """Return the Fernet key from keyring, or derive one via PBKDF2 fallback."""

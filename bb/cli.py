@@ -290,6 +290,7 @@ def status() -> None:
         console.print("[bold]DB:[/bold] not initialized — run bb init")
         return
 
+    verified_row = None
     try:
         with Database(db_path) as db:
             db.setup()
@@ -300,6 +301,10 @@ def status() -> None:
                 "SELECT synced_at, source, items_new, items_updated, error"
                 " FROM sync_log ORDER BY synced_at DESC LIMIT 3"
             ).fetchall()
+            verified_row = db._conn.execute(
+                "SELECT sent_at FROM notification_log WHERE type='session_verified'"
+                " ORDER BY sent_at DESC LIMIT 1"
+            ).fetchone()
     except sqlite3.OperationalError:
         console.print("[bold]DB:[/bold] not initialized — run bb init")
         return
@@ -309,6 +314,9 @@ def status() -> None:
         f"{announcements} announcement{'s' if announcements != 1 else ''}, "
         f"{grade_count} grade{'s' if grade_count != 1 else ''}"
     )
+
+    if verified_row:
+        console.print(f"[bold]Last verified:[/bold] {verified_row[0]}")
 
     if not sync_rows:
         console.print("[bold]Last syncs:[/bold] never")
@@ -331,16 +339,47 @@ def sync(
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Fetch iCal and report counts without writing to DB"
     ),
+    refresh_only: bool = typer.Option(
+        False, "--refresh-only", help="Probe session liveness and exit (no data sync)"
+    ),
 ) -> None:
     """Sync deadlines, announcements, and grades from Blackboard."""
     from bb.adapters.blackboard_ultra import BlackboardUltraAdapter
     from bb.security.session import SessionError, SessionManager
-    from bb.sync import sync_announcements, sync_content_additions, sync_grades, sync_ical, sync_stream
+    from bb.sync import preflight_session, sync_announcements, sync_content_additions, sync_grades, sync_ical, sync_stream
 
     cfg = load_config()
     BB_DIR = _config_module.BB_DIR
     db_path = BB_DIR / "bb.db"
     total_new = 0
+
+    # --- Preflight: verify session liveness before any Playwright work ---
+    if not ical_only and not dry_run:
+        sm_pre = SessionManager(BB_DIR / "session.enc")
+        try:
+            with Database(db_path) as db:
+                db.setup()
+                preflight_session(sm_pre, cfg.lms_url, db)
+            if refresh_only:
+                console.print("[green]✔[/green] Session verified live.")
+                return
+        except SessionError as exc:
+            console.print(f"[yellow]⚠[/yellow] {exc}")
+            with Database(db_path) as db:
+                db.setup()
+                db.log_sync("preflight", 0, 0, error="session_dead")
+                # No cooldown — probe failures need immediate user action
+                dispatch_notify(
+                    cfg.notification.provider,
+                    "bb — Session Expired",
+                    "Run `bb auth` to re-authenticate.",
+                    cfg.notification.ntfy_topic,
+                )
+                db.log_notification("session_expired_probe")
+            raise typer.Exit(code=1)
+    elif refresh_only:
+        console.print("[dim]--refresh-only has no effect with --ical-only or --dry-run[/dim]")
+        return
 
     # --- Phase 0: Build course map (skipped if --ical-only) ---
     if not ical_only:
