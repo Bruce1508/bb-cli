@@ -471,6 +471,42 @@ def test_handle_slash_think_toggles(monkeypatch):
     assert engine._cfg.ai.think is False
 
 
+def test_system_prompt_does_not_hardcode_no_think():
+    """Regression: /no_think must not live in the prompt — it overrides the API toggle."""
+    from bb.ai.prompts import SYSTEM_PROMPT
+    assert "/no_think" not in SYSTEM_PROMPT
+
+
+def test_ollama_chat_receives_think_true_when_toggled(monkeypatch):
+    """Regression: cfg.ai.think=True propagates to the Ollama API call."""
+    import sys
+    from unittest.mock import MagicMock, patch
+    from bb.config import BBConfig
+
+    msg = MagicMock()
+    msg.content = "ok"
+    msg.tool_calls = None
+
+    mock_pkg = MagicMock()
+    m1 = MagicMock()
+    m1.model = "qwen3:8b"
+    mock_pkg.list.return_value = MagicMock(models=[m1])
+    mock_pkg.chat.return_value = MagicMock(message=msg)
+
+    monkeypatch.setitem(sys.modules, "ollama", mock_pkg)
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+
+    from bb.ai.chat import ChatEngine
+    cfg = BBConfig()
+    cfg.ai.think = True
+    engine = ChatEngine(cfg)
+    with patch.object(engine, "_stream_answer", return_value="ok"):
+        engine.process_turn("hello")
+
+    _, kwargs = mock_pkg.chat.call_args_list[0]
+    assert kwargs.get("think") is True
+
+
 def test_handle_slash_unknown_returns_false(monkeypatch):
     """/unknown command returns False (no exit)."""
     import sys

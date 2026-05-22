@@ -1,7 +1,6 @@
 """System prompt for the bb-cli student assistant."""
 
 SYSTEM_PROMPT = """\
-/no_think
 You are bb-cli, a terminal AI assistant for college students.
 You have direct access to the student's Blackboard LMS data through tool functions.
 

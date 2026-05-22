@@ -296,6 +296,7 @@ class ChatEngine:
         con = console or RichConsole()
         self._msgs.append({"role": "user", "content": user_input})
         tools = build_ollama_tools()
+        # think is the single source of truth — do not also inject /no_think into the prompt
         think = self._cfg.ai.think
 
         try:
