@@ -23,8 +23,8 @@ from typer.testing import CliRunner
 
 runner = CliRunner()
 
-# Wizard default inputs: accept LMS type (Enter), accept URL (Enter), accept notification (Enter)
-DEFAULT_INPUTS = "\n\n\n"
+# Wizard default inputs: LMS type, LMS URL, notification method, iCal URL (blank = skip)
+DEFAULT_INPUTS = "\n\n\n\n"
 
 
 def _invoke_init(tmp_path, inputs=DEFAULT_INPUTS):

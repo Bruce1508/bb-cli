@@ -78,12 +78,23 @@ def init() -> None:
     notify_choice = typer.prompt("Select", default=1, type=int)
     notify_provider = _NOTIFY_OPTIONS.get(notify_choice, _NOTIFY_OPTIONS[1])[0]
 
+    # --- iCal feed URL ---
+    console.print(
+        "\n[bold]iCal feed URL[/bold] [dim](optional — enables deadline sync without browser)[/dim]"
+    )
+    console.print(
+        "[dim]  Find it in Blackboard → Calendar → Subscribe → copy the URL[/dim]"
+    )
+    ical_url = typer.prompt("iCal URL (leave blank to skip)", default=existing.ical_url or "")
+    ical_url = ical_url.strip() or None
+
     # --- Save config ---
     BB_DIR = _config_module.BB_DIR
     bb_dir_existed = BB_DIR.exists()
     cfg = BBConfig(
         lms_type=lms_type,  # type: ignore[arg-type]
         lms_url=lms_url,
+        ical_url=ical_url,
         notification=NotificationConfig(provider=notify_provider),  # type: ignore[arg-type]
         sync_interval_hours=existing.sync_interval_hours,
     )
@@ -276,11 +287,11 @@ def status() -> None:
         age_label = "[green]fresh[/green]"
         if mtime:
             hours_ago = (datetime.now(timezone.utc) - mtime).total_seconds() / 3600
-            age_label += f" ({hours_ago:.1f}h old)"
+            age_label += f" ({hours_ago:.1f}h old) — next: [dim]bb sync[/dim]"
     elif age_status == "uncertain":
-        age_label = "[yellow]uncertain[/yellow] (run bb sync to verify)"
+        age_label = "[yellow]uncertain[/yellow] — run [bold]bb sync --refresh-only[/bold] to verify"
     else:
-        age_label = "[red]expired[/red] — run bb auth"
+        age_label = "[red]expired[/red] — run [bold]bb auth[/bold] then [bold]bb sync[/bold]"
 
     console.print(f"[bold]Session:[/bold] {age_label}")
 
@@ -364,7 +375,8 @@ def sync(
                 console.print("[green]✔[/green] Session verified live.")
                 return
         except SessionError as exc:
-            console.print(f"[yellow]⚠[/yellow] {exc}")
+            console.print(f"[red]✘[/red] {exc}")
+            console.print("[dim]  Sync aborted — no data was changed.[/dim]")
             with Database(db_path) as db:
                 db.setup()
                 db.log_sync("preflight", 0, 0, error="session_dead")

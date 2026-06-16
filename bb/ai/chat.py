@@ -425,10 +425,7 @@ def run_chat(
         return
 
     # Interactive REPL
-    con.print(
-        f"[bold cyan]🤖 bb-cli AI[/bold cyan] [dim]— "
-        f"Your Blackboard assistant ({engine.get_provider_display()})[/dim]"
-    )
+    con.print(f"[bold cyan]🎓 bb chat[/bold cyan]  [dim]({engine.get_provider_display()})[/dim]")
     con.print("[dim]Type '/exit' to quit, '/help' for commands[/dim]")
 
     # First-run hint: show example queries when there is no prior history
@@ -440,7 +437,7 @@ def run_chat(
 
     while True:
         try:
-            prompt_label = "[bold]You [think]:[/bold]" if engine._cfg.ai.think else "[bold]You:[/bold]"
+            prompt_label = "[bold]You 🧠:[/bold]" if engine._cfg.ai.think else "[bold]You:[/bold]"
             user_input = con.input(prompt_label + " ").strip()
         except (EOFError, KeyboardInterrupt):
             con.print("\n👋 See you later!")
