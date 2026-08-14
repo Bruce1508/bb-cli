@@ -327,3 +327,39 @@ def read_file_content(course: str, filename: str) -> dict:
         "char_count": len(text),
         "truncated": truncated,
     }
+
+
+def get_recent_changes(days: int = 7, course: str | None = None) -> list[dict]:
+    """Return what recently CHANGED on existing Blackboard items.
+
+    Use this tool when the student asks what changed, what's new since last time,
+    'did any deadline move', 'were any grades posted', or 'what happened this week'.
+    This covers MODIFICATIONS to existing items (a due date moving, a grade being
+    posted or changed) — not brand-new items.
+
+    Args:
+        days: How many days back to look (default 7).
+        course: Course code to filter by (e.g. 'BTP200'). Omit or pass None for
+            all courses. Do NOT pass 'all' — pass None.
+    """
+    BB_DIR = _config_module.BB_DIR
+    if course and course.lower() in ("all", "any", "*", "none"):
+        course = None
+    try:
+        with Database(BB_DIR / "bb.db") as db:
+            db.setup()
+            rows = db.get_changes(days=days, course=course)
+    except Exception:
+        return []
+    return [
+        {
+            "course": c.course,
+            "item_type": c.item_type,
+            "title": c.title,
+            "change_type": c.change_type,
+            "old_value": c.old_value,
+            "new_value": c.new_value,
+            "detected_at": c.detected_at,
+        }
+        for c in rows
+    ]
