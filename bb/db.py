@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from bb.adapters.base import Announcement, Deadline, GradeItem
+from bb.changes import Change, diff_deadline, diff_grade
 
 BB_DIR = Path.home() / ".bb"
 
@@ -85,12 +86,30 @@ CREATE TABLE IF NOT EXISTS downloads (
 INSERT OR IGNORE INTO schema_version VALUES (5);
 """
 
+MIGRATION_6 = """
+CREATE TABLE IF NOT EXISTS change_log (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    detected_at     TEXT NOT NULL,
+    course          TEXT NOT NULL,
+    item_type       TEXT NOT NULL,
+    item_id         TEXT NOT NULL,
+    title           TEXT NOT NULL,
+    change_type     TEXT NOT NULL,
+    field           TEXT NOT NULL,
+    old_value       TEXT,
+    new_value       TEXT,
+    acknowledged_at TEXT
+);
+INSERT OR IGNORE INTO schema_version VALUES (6);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: MIGRATION_1,
     2: MIGRATION_2,
     3: MIGRATION_3,
     4: MIGRATION_4,
     5: MIGRATION_5,
+    6: MIGRATION_6,
 }
 
 
@@ -139,6 +158,12 @@ class Database:
         )
         is_new = cur.rowcount > 0
         if not is_new:
+            old = self._conn.execute(
+                "SELECT due_at FROM deadlines WHERE id=?", (d.id,)
+            ).fetchone()
+            if old is not None:
+                for ch in diff_deadline(old[0], d):
+                    self._record_change(ch)
             self._conn.execute(
                 "UPDATE deadlines SET title=?, due_at=?, source=? WHERE id=?",
                 (d.title, due_str, d.source, d.id),
@@ -181,6 +206,12 @@ class Database:
         )
         is_new = cur.rowcount > 0
         if not is_new:
+            old = self._conn.execute(
+                "SELECT score, status FROM grades WHERE id=?", (g.id,)
+            ).fetchone()
+            if old is not None:
+                for ch in diff_grade(old[0], old[1], g):
+                    self._record_change(ch)
             self._conn.execute(
                 "UPDATE grades SET item=?, score=?, out_of=?, status=? WHERE id=?",
                 (g.item, g.score, g.out_of, g.status, g.id),
@@ -359,3 +390,66 @@ class Database:
             }
             for r in rows
         ]
+
+    # ------------------------------------------------------------------
+    # Change log
+    # ------------------------------------------------------------------
+
+    def _record_change(self, ch: Change) -> None:
+        """Insert a change_log row. Does NOT commit — caller's txn commits."""
+        self._conn.execute(
+            "INSERT INTO change_log (detected_at, course, item_type, item_id,"
+            " title, change_type, field, old_value, new_value)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (ch.detected_at, ch.course, ch.item_type, ch.item_id, ch.title,
+             ch.change_type, ch.field, ch.old_value, ch.new_value),
+        )
+
+    def get_changes(
+        self,
+        days: int | None = None,
+        course: str | None = None,
+        unacknowledged_only: bool = False,
+        since: str | None = None,
+    ) -> list[Change]:
+        """Return change_log rows as Change objects, newest first."""
+        clauses: list[str] = []
+        params: list[object] = []
+        if since is not None:
+            clauses.append("detected_at >= ?")
+            params.append(since)
+        if days is not None:
+            cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+            clauses.append("detected_at >= ?")
+            params.append(cutoff)
+        if course is not None:
+            clauses.append("UPPER(course) = ?")
+            params.append(course.upper())
+        if unacknowledged_only:
+            clauses.append("acknowledged_at IS NULL")
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        rows = self._conn.execute(
+            "SELECT id, detected_at, course, item_type, item_id, title,"
+            " change_type, field, old_value, new_value FROM change_log"
+            f"{where} ORDER BY detected_at DESC, id DESC",
+            params,
+        ).fetchall()
+        return [
+            Change(
+                id=r[0], detected_at=r[1], course=r[2], item_type=r[3],
+                item_id=r[4], title=r[5], change_type=r[6], field=r[7],
+                old_value=r[8], new_value=r[9],
+            )
+            for r in rows
+        ]
+
+    def acknowledge_changes(self, ids: list[int]) -> None:
+        """Mark the given change_log rows as seen (acknowledged_at = now)."""
+        if not ids:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.executemany(
+            "UPDATE change_log SET acknowledged_at=? WHERE id=?",
+            [(now, i) for i in ids],
+        )
+        self._conn.commit()

@@ -86,7 +86,7 @@ def test_context_manager_closes_connection():
 def test_schema_version_is_5_after_full_migration():
     with make_db() as db:
         row = db._conn.execute("SELECT MAX(version) FROM schema_version").fetchone()
-        assert row[0] == 5
+        assert row[0] == 6
 
 
 def test_announcements_table_exists():
