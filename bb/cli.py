@@ -36,6 +36,34 @@ def _warn_if_session_stale() -> None:
         console.print("[dim]⚠ Session age uncertain — data may be stale. Run bb sync to refresh.[/dim]")
 
 
+_CHANGE_COOLDOWN_HOURS = 6
+_NOTIFY_CHANGE_TYPES = {"due_moved", "grade_posted", "grade_changed"}
+
+
+def _render_change_digest(changes: list) -> str:
+    """Return a one-line '⟳ N changes: ...' digest, or '' when empty."""
+    from bb.changes import humanize
+
+    if not changes:
+        return ""
+    n = len(changes)
+    return f"⟳ {n} change{'s' if n != 1 else ''}: {humanize(changes)}"
+
+
+def _notify_changes(db, changes, provider, ntfy_topic) -> None:
+    """Fire one deduped notification per changed item+field (6h cooldown)."""
+    from bb.changes import humanize
+
+    for ch in changes:
+        if ch.change_type not in _NOTIFY_CHANGE_TYPES:
+            continue
+        key = f"change:{ch.item_id}:{ch.field}"
+        if db.was_notified_recently(key, within_hours=_CHANGE_COOLDOWN_HOURS):
+            continue
+        dispatch_notify(provider, "bb", humanize([ch]), ntfy_topic)
+        db.log_notification(key)
+
+
 @app.command()
 def version() -> None:
     """Print the bb-cli version."""
@@ -393,6 +421,8 @@ def sync(
         console.print("[dim]--refresh-only has no effect with --ical-only or --dry-run[/dim]")
         return
 
+    run_start = datetime.now(timezone.utc).isoformat()
+
     # --- Phase 0: Build course map (skipped if --ical-only) ---
     if not ical_only:
         console.print("⟳ Phase 0: Discovering courses...")
@@ -534,6 +564,15 @@ def sync(
         console.print("[yellow]⚠[/yellow] Session expired — run [bold]bb auth[/bold].")
     except Exception as exc:
         console.print(f"[yellow]⚠[/yellow] Content scan failed: {exc}")
+
+    # --- Change digest (deadlines/grades modified since run_start) ---
+    with Database(db_path) as db:
+        db.setup()
+        changes = db.get_changes(since=run_start)
+        digest = _render_change_digest(changes)
+        if digest:
+            console.print(f"[cyan]{digest}[/cyan]")
+            _notify_changes(db, changes, cfg.notification.provider, cfg.notification.ntfy_topic)
 
     # --- Notify ---
     if total_new > 0:
@@ -683,6 +722,45 @@ def ann(
         table.add_row(a.course, title_str, posted_str)
 
     console.print(table)
+
+
+@app.command()
+def changes(
+    show_all: bool = typer.Option(False, "--all", help="Show full history (does not mark seen)"),
+    course: Optional[str] = typer.Option(None, "--course", "-c", help="Filter by course code"),
+    days: int = typer.Option(30, "--days", "-d", help="Look back N days"),
+    output_json: bool = typer.Option(False, "--json", help="Output as JSON array"),
+) -> None:
+    """Show what changed on Blackboard (moved deadlines, posted/changed grades)."""
+    BB_DIR = _config_module.BB_DIR
+    with Database(BB_DIR / "bb.db") as db:
+        db.setup()
+        rows = db.get_changes(
+            days=days, course=course,
+            unacknowledged_only=not show_all,
+        )
+        if output_json:
+            import json
+
+            console.print(json.dumps([
+                {
+                    "course": c.course, "item_type": c.item_type,
+                    "title": c.title, "change_type": c.change_type,
+                    "old_value": c.old_value, "new_value": c.new_value,
+                    "detected_at": c.detected_at,
+                }
+                for c in rows
+            ]))
+            return
+        if not rows:
+            console.print("[dim]No changes.[/dim]" if show_all
+                          else "[dim]Nothing new since you last checked.[/dim]")
+            return
+        from bb.changes import humanize
+
+        console.print(humanize(rows))
+        if not show_all:
+            db.acknowledge_changes([c.id for c in rows if c.id is not None])
 
 
 def _render_tree(content_tree) -> None:
