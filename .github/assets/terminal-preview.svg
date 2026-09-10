@@ -1,0 +1,88 @@
+<svg width="1440" height="760" viewBox="0 0 1440 760" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="80" y1="0" x2="1360" y2="760" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111820"/>
+      <stop offset="1" stop-color="#090D12"/>
+    </linearGradient>
+    <linearGradient id="line" x1="75" y1="120" x2="1365" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F25F6B"/>
+      <stop offset="0.48" stop-color="#37D8E6"/>
+      <stop offset="1" stop-color="#57E6B1"/>
+    </linearGradient>
+    <filter id="shadow" x="20" y="20" width="1400" height="720" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="22" stdDeviation="24" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <rect width="1440" height="760" rx="28" fill="#06090D"/>
+  <g filter="url(#shadow)">
+    <rect x="55" y="45" width="1330" height="670" rx="18" fill="url(#bg)" stroke="#303944" stroke-width="2"/>
+    <path d="M55 104C55 71.4152 55 55.1228 65.1228 45C75.2456 34.8772 91.538 34.8772 124.123 34.8772H1315.88C1348.46 34.8772 1364.75 34.8772 1374.88 45C1385 55.1228 1385 71.4152 1385 104H55Z" fill="#171E26"/>
+    <rect x="55" y="103" width="1330" height="3" fill="url(#line)"/>
+  </g>
+
+  <circle cx="92" cy="75" r="9" fill="#FF5F57"/>
+  <circle cx="122" cy="75" r="9" fill="#FEBC2E"/>
+  <circle cx="152" cy="75" r="9" fill="#28C840"/>
+  <text x="720" y="82" text-anchor="middle" fill="#AAB6C3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20" font-weight="600">bb-cli · local terminal</text>
+
+  <g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="20">
+    <text x="92" y="154" fill="#57E6B1">$</text>
+    <text x="118" y="154" fill="#F0F6FC">bb sync</text>
+
+    <text x="92" y="198" fill="#8B98A5">⟳ Phase 0</text>
+    <text x="258" y="198" fill="#D6DEE7">Discovering courses</text>
+    <text x="560" y="198" fill="#57E6B1">✓ 5 mapped</text>
+
+    <text x="92" y="237" fill="#8B98A5">⟳ Phase 1</text>
+    <text x="258" y="237" fill="#D6DEE7">iCal deadlines</text>
+    <text x="560" y="237" fill="#57E6B1">✓ 12 synced</text>
+
+    <text x="92" y="276" fill="#8B98A5">⟳ Phase 2</text>
+    <text x="258" y="276" fill="#D6DEE7">Activity stream</text>
+    <text x="560" y="276" fill="#57E6B1">✓ 3 new</text>
+
+    <text x="92" y="315" fill="#8B98A5">⟳ Phase 3–5</text>
+    <text x="258" y="315" fill="#D6DEE7">Grades · announcements · content</text>
+    <text x="690" y="315" fill="#57E6B1">✓ fresh</text>
+
+    <rect x="91" y="348" width="635" height="58" rx="10" fill="#112B32" stroke="#275B65"/>
+    <text x="113" y="384" fill="#37D8E6">⟳ 2 changes:</text>
+    <text x="282" y="384" fill="#D6DEE7">Lab 4 moved · Quiz 3 graded</text>
+
+    <line x1="770" y1="143" x2="770" y2="405" stroke="#303944"/>
+
+    <text x="811" y="154" fill="#57E6B1">$</text>
+    <text x="837" y="154" fill="#F0F6FC">bb due --days 7</text>
+
+    <text x="811" y="205" fill="#8B98A5" font-weight="700">COURSE</text>
+    <text x="970" y="205" fill="#8B98A5" font-weight="700">ASSIGNMENT</text>
+    <text x="1235" y="205" fill="#8B98A5" font-weight="700">DUE</text>
+    <line x1="811" y1="219" x2="1338" y2="219" stroke="#303944"/>
+
+    <text x="811" y="258" fill="#37D8E6">BTP200</text>
+    <text x="970" y="258" fill="#D6DEE7">Lab 4</text>
+    <text x="1235" y="258" fill="#F25F6B">● Tomorrow</text>
+
+    <text x="811" y="303" fill="#37D8E6">INT222</text>
+    <text x="970" y="303" fill="#D6DEE7">Assignment 2</text>
+    <text x="1235" y="303" fill="#F4C95D">● Friday</text>
+
+    <text x="811" y="348" fill="#37D8E6">OPS445</text>
+    <text x="970" y="348" fill="#D6DEE7">Quiz 3</text>
+    <text x="1235" y="348" fill="#57E6B1">● Sunday</text>
+
+    <line x1="92" y1="448" x2="1338" y2="448" stroke="#303944"/>
+
+    <text x="92" y="500" fill="#57E6B1">$</text>
+    <text x="118" y="500" fill="#F0F6FC">bb chat "what changed since my last sync?"</text>
+
+    <rect x="92" y="534" width="1246" height="119" rx="12" fill="#0C141B" stroke="#263440"/>
+    <circle cx="127" cy="571" r="18" fill="#123944"/>
+    <text x="127" y="579" text-anchor="middle" fill="#37D8E6" font-size="19">✦</text>
+    <text x="162" y="576" fill="#F0F6FC" font-weight="700">Two updates:</text>
+    <text x="162" y="614" fill="#D6DEE7">BTP200 Lab 4 moved to Friday, and your OPS445 Quiz 3 grade was posted.</text>
+  </g>
+
+  <text x="1340" y="693" text-anchor="end" fill="#65717D" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15">Illustrative data</text>
+</svg>
