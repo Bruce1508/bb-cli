@@ -134,6 +134,7 @@ _TOOL_LABELS: dict[str, str] = {
     "generate_study_plan": "Gathering study materials",
     "extract_key_concepts": "Collecting course materials",
     "estimate_study_time": "Analyzing grades and deadlines",
+    "get_recent_changes": "Checking what changed",
 }
 
 

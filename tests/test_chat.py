@@ -793,3 +793,22 @@ def test_no_provider_help_never_suggests_unsupported_provider(monkeypatch, tmp_p
     assert "ollama pull" in out
     assert 'provider = "claude"' not in out
     assert "api_key" not in out
+
+
+def test_every_tool_has_a_label():
+    from bb.ai.chat import _TOOL_LABELS
+    from bb.tools import TOOL_REGISTRY
+    assert set(TOOL_REGISTRY) <= set(_TOOL_LABELS)
+
+
+def test_estimate_study_time_does_not_promise_final_exam_math():
+    from bb.ai.chat import _tool_description
+    from bb.tools.ai_tools import estimate_study_time
+    desc = _tool_description(estimate_study_time)
+    assert "need on the final" not in desc
+    assert "weights are NOT available" in desc
+
+
+def test_system_prompt_forbids_grade_weight_math():
+    from bb.ai.prompts import SYSTEM_PROMPT
+    assert "weights are unknown" in SYSTEM_PROMPT

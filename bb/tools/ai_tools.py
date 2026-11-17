@@ -141,7 +141,11 @@ def estimate_study_time(course: str, target_grade: str | None = None) -> dict:
     """Gather grade and deadline data so the LLM can estimate required study time.
 
     Use this when the student asks 'how much time should I study for BTI325',
-    'will I pass if I study X hours', or 'what grade do I need on the final'.
+    or 'will I pass if I study X hours'.
+
+    IMPORTANT: Blackboard grade weights are NOT available. Never calculate the score
+    needed on a final exam or a final course grade — say the weights are unknown and
+    show the raw scores instead.
 
     Collects current grades, remaining deadlines (next 30 days), and downloaded
     files so the LLM can produce a realistic, data-grounded time estimate.
