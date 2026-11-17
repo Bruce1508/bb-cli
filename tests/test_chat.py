@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock, patch
 
 
 def test_aiconfig_defaults():
@@ -82,6 +83,44 @@ def test_dispatch_tool_graceful_when_db_missing(tmp_path, monkeypatch):
     result = dispatch_tool("get_upcoming_deadlines", {"days": 7})
     parsed = json.loads(result)
     assert parsed == []  # graceful empty, not an error
+
+
+def _done(*a, **kw):
+    import subprocess
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout="ok\n", stderr="")
+
+
+def test_dispatch_tool_coerces_string_bool(tmp_path, monkeypatch):
+    """{"full": "false"} from the LLM must mean a FAST sync, not a truthy full one."""
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    from bb.ai.chat import dispatch_tool
+    with patch("bb.tools.actions.subprocess.run", side_effect=_done) as run:
+        dispatch_tool("sync_now", {"full": "false"})
+    assert "--ical-only" in run.call_args.args[0]
+
+
+def test_dispatch_tool_coerces_string_int(tmp_path, monkeypatch):
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    (tmp_path / "files" / "X").mkdir(parents=True)
+    (tmp_path / "files" / "X" / "f.pdf").touch()
+    page = MagicMock()
+    page.extract_text.return_value = "a" * 9000
+    pdf = MagicMock(pages=[page])
+    pdf.__enter__ = lambda s: s
+    from bb.ai.chat import dispatch_tool
+    with patch("bb.tools.queries.pdfplumber.open", return_value=pdf):
+        parsed = json.loads(dispatch_tool(
+            "read_file_content", {"course": "X", "filename": "f", "offset": "8000"}))
+    assert parsed["offset"] == 8000 and parsed["text"] == "a" * 1000
+
+
+def test_dispatch_tool_rejects_bad_types(tmp_path, monkeypatch):
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    from bb.ai.chat import dispatch_tool
+    with patch("bb.tools.actions.subprocess.run", side_effect=_done) as run:
+        parsed = json.loads(dispatch_tool("sync_now", {"full": "banana"}))
+    assert "error" in parsed
+    run.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

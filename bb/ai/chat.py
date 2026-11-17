@@ -109,8 +109,11 @@ def dispatch_tool(name: str, args: dict) -> str:
     fn = TOOL_REGISTRY.get(name)
     if fn is None:
         return json.dumps({"error": f"Unknown tool: {name}"})
+    from pydantic import validate_call
+
     try:
-        result = fn(**args)
+        # LLM args are raw JSON: coerce "false"/"8000" to the annotated type, reject junk.
+        result = validate_call(fn)(**args)
         return json.dumps(result, default=str)
     except Exception as exc:
         return json.dumps({"error": str(exc)})
