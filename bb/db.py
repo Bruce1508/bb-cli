@@ -138,14 +138,17 @@ class Database:
         for version in sorted(MIGRATIONS):
             if version <= current:
                 continue
-            # ALTER ... ADD COLUMN isn't idempotent: tolerate a racing/crashed earlier apply.
-            if version == 7 and any(
-                r[1] == "url" for r in self._conn.execute("PRAGMA table_info(downloads)")
-            ):
-                self._conn.execute("INSERT OR IGNORE INTO schema_version VALUES (7)")
-                self._conn.commit()
-                continue
-            self._conn.executescript(MIGRATIONS[version])
+            try:
+                self._conn.executescript(MIGRATIONS[version])
+            except sqlite3.OperationalError as exc:
+                # ALTER ... ADD COLUMN isn't idempotent. Another process may have added the
+                # column between our version read and now, or an earlier run crashed after
+                # the ALTER but before recording the version: either way it's applied.
+                if version == 7 and "duplicate column name" in str(exc):
+                    self._conn.execute("INSERT OR IGNORE INTO schema_version VALUES (7)")
+                    self._conn.commit()
+                    continue
+                raise
 
     def close(self) -> None:
         """Close the SQLite connection."""
