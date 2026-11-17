@@ -5,6 +5,7 @@ import re
 import subprocess
 import time
 import webbrowser
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -504,6 +505,29 @@ def _run_proactive(cfg: BBConfig, db_path: Path, digest: bool = True) -> None:
         console.print(f"[yellow]⚠[/yellow] Daily digest failed: {exc}")
 
 
+@contextmanager
+def _sync_lock():
+    """Exclusive, non-blocking lock so a chat/MCP sync can't race the scheduled one.
+
+    Yields True when acquired. The lock is released when the file closes (also on crash).
+    Platforms without fcntl (Windows) yield True — auto-sync isn't supported there anyway.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        yield True
+        return
+    bb_dir = _config_module.BB_DIR
+    bb_dir.mkdir(parents=True, exist_ok=True)
+    with open(bb_dir / "sync.lock", "w") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        yield True
+
+
 @app.command()
 def sync(
     ical_only: bool = typer.Option(
@@ -517,6 +541,14 @@ def sync(
     ),
 ) -> None:
     """Sync deadlines, announcements, and grades from Blackboard."""
+    with _sync_lock() as acquired:
+        if not acquired:
+            console.print("[dim]Another bb sync is running — skipped.[/dim]")
+            return
+        _run_sync(ical_only=ical_only, dry_run=dry_run, refresh_only=refresh_only)
+
+
+def _run_sync(ical_only: bool, dry_run: bool, refresh_only: bool) -> None:
     from bb.adapters.blackboard_ultra import BlackboardUltraAdapter
     from bb.security.session import SessionError, SessionManager
     from bb.sync import (
