@@ -184,11 +184,12 @@ def _course_names() -> dict[str, str]:
 
 
 def resolve_course(text: str | None) -> str | None:
-    """Map loose course text ('btp', 'oop', 'web programming') to a course code.
+    """Map loose course text ('btp', 'web programming tools') to a course code.
 
     None / 'all' / 'any' / '*' / 'none' / '' mean "no filter" → None.
     Unique match on code substring, then on display name → that code.
-    No match or ambiguous → text.upper() stripped to [A-Z0-9_-] (never a path), so filters
+    Several matches → ValueError naming them, so the caller can ask which one.
+    No match → text.upper() stripped to [A-Z0-9_-] (never a path), so filters
     return nothing rather than everything.
     """
     if text is None or text.strip().lower() in _NO_FILTER:
@@ -198,13 +199,17 @@ def resolve_course(text: str | None) -> str | None:
     codes = get_course_list()
     if upper in codes:
         return upper
-    hits = [c for c in codes if upper in c.upper()]
-    if len(hits) == 1:
-        return hits[0]
-    hits = [code for code, name in _course_names().items() if query.lower() in name.lower()]
-    if len(hits) == 1:
-        return hits[0]
-    # ponytail: ambiguous input matches nothing; return candidates if students hit this often
+    for hits in (
+        [c for c in codes if upper in c.upper()],
+        [code for code, name in _course_names().items() if query.lower() in name.lower()],
+    ):
+        if len(hits) == 1:
+            return hits[0]
+        if hits:
+            raise ValueError(
+                f"Ambiguous course '{text}': matches {', '.join(sorted(hits))}. "
+                "Use one of these codes."
+            )
     # Callers use the code as a path component (files/<code>), so it may only hold safe chars.
     return re.sub(r"[^A-Z0-9_-]", "", upper) or "NONE"
 
@@ -328,10 +333,11 @@ def list_downloaded_files(course: str | None = None) -> list[dict]:
         course: Optional course code filter. Case-insensitive.
     """
     BB_DIR = _config_module.BB_DIR
+    course = resolve_course(course)  # outside the try: an ambiguous course must reach the caller
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
-            return db.get_downloads(course=resolve_course(course))
+            return db.get_downloads(course=course)
     except Exception:
         return []
 

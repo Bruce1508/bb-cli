@@ -28,9 +28,8 @@ def courses(tmp_path):
     ("btp", "BTP200"),            # unique code prefix
     ("object", "BTP200"),         # display-name match
     ("frameworks", "WEB322"),
-    ("web", "WEB"),               # ambiguous → no match, not "everything"
-    ("programming", "PROGRAMMING"),
-    ("xyz", "XYZ"),
+    ("web programming tools", "WEB322"),
+    ("xyz", "XYZ"),               # unknown → sanitized upper, so filters return nothing
     ("all", None),
     ("  ", None),
     (None, None),
@@ -39,9 +38,54 @@ def test_resolve_course(courses, text, expected):
     assert resolve_course(text) == expected
 
 
+@pytest.mark.parametrize("text", ["web", "programming"])  # code hits / display-name hits
+def test_ambiguous_course_is_an_error_naming_the_candidates(courses, text):
+    with pytest.raises(ValueError, match="WEB322") as exc:
+        resolve_course(text)
+    assert "WEB422" in str(exc.value)
+
+
 def test_tools_accept_loose_course_names(courses):
     assert [d["title"] for d in get_upcoming_deadlines(course="btp")] == ["Lab 4"]
-    assert get_upcoming_deadlines(course="web") == []
+    with pytest.raises(ValueError, match="Ambiguous"):
+        get_upcoming_deadlines(course="web")
+
+
+def test_every_course_tool_reports_ambiguity(courses):
+    """No tool may swallow the ambiguity into an empty answer ("no deadlines")."""
+    from bb.tools.ai_tools import (
+        estimate_study_time,
+        extract_key_concepts,
+        generate_study_plan,
+        summarize_content,
+    )
+    from bb.tools.queries import list_downloaded_files
+    for call in (
+        lambda: list_downloaded_files(course="web"),
+        lambda: generate_study_plan(course="web"),
+        lambda: extract_key_concepts(course="web"),
+        lambda: estimate_study_time(course="web"),
+        lambda: summarize_content(course="web", filename="x"),
+    ):
+        with pytest.raises(ValueError, match="Ambiguous"):
+            call()
+
+
+def test_dispatch_tool_returns_the_ambiguity_to_the_model(courses):
+    import json
+
+    from bb.ai.chat import dispatch_tool
+    out = json.loads(dispatch_tool("get_grades", {"course": "web"}))
+    assert "Ambiguous course 'web'" in out["error"] and "WEB422" in out["error"]
+
+
+def test_cli_course_option_reports_ambiguity(tmp_path, courses):
+    from typer.testing import CliRunner
+
+    from bb.cli import app
+    result = CliRunner().invoke(app, ["due", "--course", "web"])
+    assert result.exit_code == 1
+    assert "Ambiguous" in result.output and "WEB322" in result.output
 
 
 def test_unmatched_course_cannot_become_a_path(courses):

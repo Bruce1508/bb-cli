@@ -14,6 +14,7 @@ from bb.tools.queries import (
     get_upcoming_deadlines,
     list_downloaded_files,
     read_file_content,
+    resolve_course,
     search_content,
 )
 
@@ -40,6 +41,7 @@ def summarize_content(course: str, filename: str, offset: int = 0) -> dict:
         On failure: {error: "file not found"} or {error: "not a PDF"} or
                     {error: "unreadable: <reason>"}
     """
+    course = resolve_course(course) or course  # raises on an ambiguous course
     return read_file_content(course=course, filename=filename, offset=offset)
 
 
@@ -60,6 +62,8 @@ def generate_study_plan(course: str, exam_type: str | None = None) -> dict:
     Returns:
         {course, exam_type, grades, upcoming_deadlines, available_files, content_tree}
     """
+    # Once, outside the per-source try/excepts, so an ambiguous course is reported.
+    course = resolve_course(course) or course.upper()
     try:
         grades = get_grades(course=course)
     except Exception:
@@ -105,6 +109,8 @@ def extract_key_concepts(course: str) -> dict:
     Returns:
         {course, downloaded_files: list[dict], content_items: list[{title, type, url}]}
     """
+    # Once, outside the per-source try/excepts, so an ambiguous course is reported.
+    course = resolve_course(course) or course.upper()
     try:
         downloaded_files = list_downloaded_files(course=course)
     except Exception:
@@ -161,6 +167,8 @@ def estimate_study_time(course: str, target_grade: str | None = None) -> dict:
     Returns:
         {course, target_grade, current_grades, remaining_deadlines, downloaded_files}
     """
+    # Once, outside the per-source try/excepts, so an ambiguous course is reported.
+    course = resolve_course(course) or course.upper()
     try:
         current_grades = get_grades(course=course)
     except Exception:

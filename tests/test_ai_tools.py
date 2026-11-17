@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from bb.tools.ai_tools import (
     estimate_study_time,
     extract_key_concepts,
@@ -25,6 +27,13 @@ MOCK_CONTENT_TREE = {
 }
 MOCK_FILE_CONTENT = {"filename": "syllabus.pdf", "course": "BTI325", "text": "Course overview", "pages": 3, "char_count": 15, "truncated": False}
 MOCK_FILE_ERROR = {"error": "file not found"}
+
+
+@pytest.fixture(autouse=True)
+def _isolated_bb_dir(tmp_path):
+    """The aggregators resolve the course against the DB: never the real ~/.bb."""
+    with patch("bb.config.BB_DIR", tmp_path):
+        yield
 
 
 # ---------------------------------------------------------------------------

@@ -553,10 +553,17 @@ def sync(
 
 
 def _course_arg(text: str | None) -> str | None:
-    """Resolve a user-typed course ('btp', 'oop') to a course code (lazy import: fast startup)."""
+    """Resolve a user-typed course ('btp', 'web programming tools') to a course code.
+
+    Lazy import: fast startup. An ambiguous course prints the candidates and exits 1.
+    """
     from bb.tools.queries import resolve_course
 
-    return resolve_course(text)
+    try:
+        return resolve_course(text)
+    except ValueError as exc:
+        console.print(f"[yellow]{escape(str(exc))}[/yellow]")
+        raise typer.Exit(1) from exc
 
 
 def _run_sync(ical_only: bool, dry_run: bool, refresh_only: bool) -> None:
