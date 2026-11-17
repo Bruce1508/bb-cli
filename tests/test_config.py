@@ -127,3 +127,11 @@ def test_invalid_notification_provider_raises_validation_error():
 
     with pytest.raises(ValidationError):
         NotificationConfig(provider="pushover")
+
+
+def test_digest_hour_is_validated():
+    from bb.config import NotificationConfig
+    for bad in (24, -1):
+        with pytest.raises(ValidationError):
+            NotificationConfig(digest_hour=bad)
+    assert NotificationConfig().digest_hour == 7

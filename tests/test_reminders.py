@@ -110,3 +110,20 @@ def test_reminder_failure_does_not_fail_sync(tmp_path):
         result = CliRunner().invoke(app, ["sync", "--ical-only"])
     assert result.exit_code == 0, result.output
     assert "Reminders failed" in result.output
+
+
+def test_reminder_failure_does_not_block_digest(tmp_path):
+    from typer.testing import CliRunner
+
+    from bb.cli import app
+    with (
+        patch("bb.config.BB_DIR", tmp_path),
+        patch("bb.reminders.send_reminders", side_effect=RuntimeError("boom")),
+        patch("bb.briefing.send_daily_digest", return_value=True) as digest,
+        patch("bb.notify.terminal.notify"),
+    ):
+        result = CliRunner().invoke(app, ["sync", "--ical-only"])
+    assert result.exit_code == 0, result.output
+    assert "Reminders failed" in result.output
+    assert digest.called
+    assert "Daily digest sent" in result.output
