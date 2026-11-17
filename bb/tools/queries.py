@@ -122,6 +122,7 @@ def get_announcements(
         limit: Maximum number of announcements (default 15).
     """
     BB_DIR = _config_module.BB_DIR
+    limit = max(1, min(limit, 30))
     # Normalize LLM-generated sentinel values that mean "no filter"
     if course and course.lower() in ("all", "any", "*", "none"):
         course = None
