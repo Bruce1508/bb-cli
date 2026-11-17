@@ -209,3 +209,41 @@ def test_cli_module_is_runnable_with_python_m():
     )
     assert result.returncode == 0, result.stderr
     assert "bb-cli" in result.stdout
+
+
+def test_init_preserves_ai_settings(tmp_path):
+    (tmp_path / "config.toml").write_text('[ai]\nmodel = "qwen3:8b"\nthink = true\n')
+    result = _invoke_init(tmp_path)
+    assert result.exit_code == 0, result.output
+    with patch("bb.config.BB_DIR", tmp_path):
+        from bb.config import load_config
+        cfg = load_config()
+    assert cfg.ai.model == "qwen3:8b"
+    assert cfg.ai.think is True
+
+
+def test_init_ntfy_asks_for_topic(tmp_path):
+    # LMS type, URL, notify=2 (ntfy), topic, iCal blank
+    result = _invoke_init(tmp_path, inputs="\n\n2\nmy-bb-topic\n\n")
+    assert result.exit_code == 0, result.output
+    with patch("bb.config.BB_DIR", tmp_path):
+        from bb.config import load_config
+        cfg = load_config()
+    assert cfg.notification.provider == "ntfy"
+    assert cfg.notification.ntfy_topic == "my-bb-topic"
+
+
+def test_init_telegram_asks_for_token_and_chat_id(tmp_path):
+    result = _invoke_init(tmp_path, inputs="\n\n3\n123:ABC\n987\n\n")
+    assert result.exit_code == 0, result.output
+    with patch("bb.config.BB_DIR", tmp_path):
+        from bb.config import load_config
+        cfg = load_config()
+    assert cfg.notification.provider == "telegram"
+    assert cfg.notification.telegram_token == "123:ABC"
+    assert cfg.notification.telegram_chat_id == "987"
+
+
+def test_init_no_longer_says_coming_soon(tmp_path):
+    result = _invoke_init(tmp_path)
+    assert "coming soon" not in result.output

@@ -15,7 +15,7 @@ from rich.table import Table
 
 import bb.config as _config_module
 from bb.auto_setup import install_auto_sync, uninstall_auto_sync
-from bb.config import BBConfig, NotificationConfig, load_config, save_config
+from bb.config import NotificationConfig, load_config, save_config
 from bb.db import Database
 from bb.downloader import Downloader, DownloadError
 from bb.notify import dispatch_notify
@@ -78,11 +78,37 @@ _LMS_OPTIONS: dict[int, tuple[str, str]] = {
     1: ("blackboard_ultra", "Blackboard Ultra"),
 }
 _NOTIFY_OPTIONS: dict[int, tuple[str, str]] = {
-    1: ("terminal", "Terminal (macOS/Linux native)"),
-    2: ("ntfy", "ntfy.sh  [coming soon]"),
-    3: ("telegram", "Telegram  [coming soon]"),
-    4: ("discord", "Discord  [coming soon]"),
+    1: ("terminal", "Desktop notification (this computer only)"),
+    2: ("ntfy", "ntfy.sh — phone push, no account needed (recommended)"),
+    3: ("telegram", "Telegram bot"),
+    4: ("discord", "Discord webhook"),
 }
+
+
+def _prompt_notification_details(
+    current: NotificationConfig, provider: str
+) -> NotificationConfig:
+    """Ask only for the credentials the chosen provider needs; keep everything else."""
+    import secrets
+
+    n = current.model_copy(update={"provider": provider})
+    if provider == "ntfy":
+        default_topic = n.ntfy_topic or f"bb-{secrets.token_hex(4)}"
+        topic = typer.prompt("ntfy topic (anyone who knows it can read it)", default=default_topic)
+        n = n.model_copy(update={"ntfy_topic": topic.strip()})
+        console.print(f"[dim]  Install the ntfy app and subscribe to: {n.ntfy_topic}[/dim]")
+    elif provider == "telegram":
+        token = typer.prompt(
+            "Telegram bot token (from @BotFather)", default=n.telegram_token or "", hide_input=True
+        )
+        chat_id = typer.prompt("Telegram chat id", default=n.telegram_chat_id or "")
+        n = n.model_copy(
+            update={"telegram_token": token.strip(), "telegram_chat_id": chat_id.strip()}
+        )
+    elif provider == "discord":
+        hook = typer.prompt("Discord webhook URL", default=n.discord_webhook or "")
+        n = n.model_copy(update={"discord_webhook": hook.strip()})
+    return n
 
 
 @app.command()
@@ -106,6 +132,7 @@ def init() -> None:
         console.print(f"  ({k}) {label}")
     notify_choice = typer.prompt("Select", default=1, type=int)
     notify_provider = _NOTIFY_OPTIONS.get(notify_choice, _NOTIFY_OPTIONS[1])[0]
+    notification = _prompt_notification_details(existing.notification, notify_provider)
 
     # --- iCal feed URL ---
     console.print(
@@ -117,16 +144,15 @@ def init() -> None:
     ical_url = typer.prompt("iCal URL (leave blank to skip)", default=existing.ical_url or "")
     ical_url = ical_url.strip() or None
 
-    # --- Save config ---
+    # --- Save config (update the existing one — never drop [ai] or tokens) ---
     BB_DIR = _config_module.BB_DIR
     bb_dir_existed = BB_DIR.exists()
-    cfg = BBConfig(
-        lms_type=lms_type,  # type: ignore[arg-type]
-        lms_url=lms_url,
-        ical_url=ical_url,
-        notification=NotificationConfig(provider=notify_provider),  # type: ignore[arg-type]
-        sync_interval_hours=existing.sync_interval_hours,
-    )
+    cfg = existing.model_copy(update={
+        "lms_type": lms_type,
+        "lms_url": lms_url,
+        "ical_url": ical_url,
+        "notification": notification,
+    })
     save_config(cfg)
     if not bb_dir_existed:
         console.print(f"\n[green]✔[/green] Created {BB_DIR}")
