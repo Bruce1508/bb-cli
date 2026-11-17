@@ -288,7 +288,7 @@ def test_read_file_content_finds_file_under_legacy_short_code(legacy_download):
     assert result["filename"] == "Tentative Syllabus.txt"
 
 
-@pytest.mark.parametrize("course", ["all", "none", "*", "!!!"])
+@pytest.mark.parametrize("course", ["all", "none", "*", "!!!", "all!", "any.", "a ll"])
 def test_read_file_content_never_reads_across_all_courses(legacy_download, course):
     assert read_file_content(course, "t") == {"error": "file not found"}
 

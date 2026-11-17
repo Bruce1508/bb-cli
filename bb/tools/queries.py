@@ -340,17 +340,24 @@ def list_downloaded_files(course: str | None = None) -> list[dict]:
     Args:
         course: Optional course code filter. Case-insensitive.
     """
-    BB_DIR = _config_module.BB_DIR
-    course = resolve_course(course)  # outside the try: an ambiguous course must reach the caller
+    # Resolve outside _downloads_for: an ambiguous course must reach the caller.
+    return _downloads_for(resolve_course(course))
+
+
+def _downloads_for(code: str | None) -> list[dict]:
+    """Download rows for an ALREADY-resolved code (None = every course).
+
+    Never resolves again: resolution isn't idempotent ('all!' → 'ALL' → no filter).
+    """
     try:
-        with Database(BB_DIR / "bb.db") as db:
+        with Database(_config_module.BB_DIR / "bb.db") as db:
             db.setup()
             rows = db.get_downloads()
     except Exception:
         return []
-    if course is None:
+    if code is None:
         return rows
-    codes = _download_codes(course, {r["course"] for r in rows})
+    codes = _download_codes(code, {r["course"] for r in rows})
     return [r for r in rows if r["course"].upper() in codes]
 
 
@@ -400,7 +407,7 @@ def read_file_content(course: str, filename: str, offset: int = 0) -> dict:
     course = course.upper()
     files_root = _config_module.BB_DIR / "files"
     # Rows list_downloaded_files returns are already limited to path-safe codes.
-    legacy = {f["course"].upper() for f in list_downloaded_files(course)} - {course}
+    legacy = {f["course"].upper() for f in _downloads_for(course)} - {course}
     dirs = [files_root / c for c in [course, *sorted(legacy)]]  # the course's own files first
     match = next(
         (
