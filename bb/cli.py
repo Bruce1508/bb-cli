@@ -260,12 +260,14 @@ def today() -> None:
     """Show what matters today: urgent deadlines, changes, unread announcements."""
     from bb.tools.queries import get_briefing
 
-    b = get_briefing()
-    if not b.get("last_sync"):
+    # No config.toml = never set up. Not "no successful sync": `bb import-ical` writes
+    # config + deadlines without a sync_log row, and failing syncs log only errors —
+    # those users must see their stored deadlines, not be sent back to `bb setup`.
+    if not (_config_module.BB_DIR / "config.toml").exists():
         console.print("👋 Not set up yet — run [bold]bb setup[/bold] to connect Blackboard.")
         return
     _warn_if_session_stale()
-    _render_briefing(b)
+    _render_briefing(get_briefing())
 
 
 def _render_briefing(b: dict) -> None:
