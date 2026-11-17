@@ -414,7 +414,8 @@ def run_chat(
     # First-run hint: show example queries when there is no prior history
     if len(engine._msgs) == 1:  # only system prompt = fresh session
         con.print(
-            "[dim]  Try: 'what's due this week?' · 'any new announcements?' · 'show my grades'[/dim]"
+            "[dim]  Try: 'what's due this week?' · 'any new announcements?'"
+            " · 'show my grades'[/dim]"
         )
     con.print()
 
