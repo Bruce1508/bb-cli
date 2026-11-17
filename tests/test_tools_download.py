@@ -228,3 +228,19 @@ def test_read_file_content_case_insensitive_course(tmp_path):
     ):
         result = read_file_content("btp200", "notes")
     assert result["course"] == "BTP200"
+
+
+def test_read_file_content_pages_through_long_text(tmp_path):
+    long_text = "A" * 8000 + "B" * 3000
+    files_dir = tmp_path / "files" / "BTP200"
+    files_dir.mkdir(parents=True)
+    (files_dir / "notes.pdf").write_bytes(b"%PDF")
+    with (
+        patch("bb.config.BB_DIR", tmp_path),
+        patch("bb.tools.queries.pdfplumber.open", return_value=_make_pdf_mock(long_text)),
+    ):
+        first = read_file_content("BTP200", "notes")
+        second = read_file_content("BTP200", "notes", offset=first["next_offset"])
+    assert first["next_offset"] == 8000 and set(first["text"]) == {"A"}
+    assert second["text"] == "B" * 3000
+    assert second["truncated"] is False and "next_offset" not in second

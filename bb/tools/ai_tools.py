@@ -18,25 +18,29 @@ from bb.tools.queries import (
 )
 
 
-def summarize_content(course: str, filename: str) -> dict:
+def summarize_content(course: str, filename: str, offset: int = 0) -> dict:
     """Retrieve text content from a downloaded course file so the LLM can summarize it.
 
     Use this when the student asks to summarize, explain, or get an overview of a
     specific file (e.g. 'summarize the BTP200 syllabus' or 'what does the week3 PDF say').
 
     Internally calls read_file_content and passes the result straight through so the
-    main LLM receives the full text and does the actual summarization itself.
+    main LLM receives the text and does the actual summarization itself. Long files
+    come back in pages of 8000 characters; if the result has "next_offset", call
+    again with offset set to it to read the rest.
 
     Args:
         course: Course code (e.g. 'BTP200').
         filename: Exact or partial filename to look up. Case-insensitive substring match.
+        offset: Character position to start reading from (default 0).
 
     Returns:
-        On success: {filename, course, text, pages, char_count, truncated}
+        On success: {filename, course, text, pages, char_count, offset, truncated}
+                    plus "next_offset" when more text remains
         On failure: {error: "file not found"} or {error: "not a PDF"} or
                     {error: "unreadable: <reason>"}
     """
-    return read_file_content(course=course, filename=filename)
+    return read_file_content(course=course, filename=filename, offset=offset)
 
 
 def generate_study_plan(course: str, exam_type: str | None = None) -> dict:

@@ -100,6 +100,7 @@ def get_grades(course: str | None = None) -> list[dict]:
 
 
 _ANN_BODY_MAX = 1500  # chars per announcement sent to the LLM
+_READ_CHUNK = 8000  # chars per read_file_content page
 
 
 def get_announcements(
@@ -331,18 +332,21 @@ def list_downloaded_files(course: str | None = None) -> list[dict]:
         return []
 
 
-def read_file_content(course: str, filename: str) -> dict:
+def read_file_content(course: str, filename: str, offset: int = 0) -> dict:
     """Extract text content from a downloaded PDF file.
 
     Use when student asks to summarize, explain, or quote from a specific course file.
-    Returns the full text (capped at 8000 chars to fit LLM context).
+    Returns up to 8000 characters starting at offset; if the result has "next_offset",
+    call again with it to keep reading.
 
     Args:
         course: Course code (e.g. 'BTP200').
         filename: Exact or partial filename. Case-insensitive substring match.
+        offset: Character position to start reading from (default 0).
 
     Returns:
-        {"filename", "course", "text", "pages", "char_count", "truncated"}
+        {"filename", "course", "text", "pages", "char_count", "offset", "truncated"}
+        plus "next_offset" when more text remains
         {"error": "file not found"} if no match
         {"error": "not a PDF"} if file extension is not .pdf
         {"error": "unreadable: <reason>"} if pdfplumber fails
@@ -366,15 +370,20 @@ def read_file_content(course: str, filename: str) -> dict:
             text = "\n".join(p.extract_text() or "" for p in pdf.pages)
     except Exception as e:
         return {"error": f"unreadable: {e}"}
-    truncated = len(text) > 8000
-    return {
+    offset = max(0, offset)
+    end = offset + _READ_CHUNK
+    result = {
         "filename": match.name,
         "course": course.upper(),
-        "text": text[:8000],
+        "text": text[offset:end],
         "pages": page_count,
         "char_count": len(text),
-        "truncated": truncated,
+        "offset": offset,
+        "truncated": end < len(text),
     }
+    if result["truncated"]:
+        result["next_offset"] = end
+    return result
 
 
 def get_recent_changes(days: int = 7, course: str | None = None) -> list[dict]:

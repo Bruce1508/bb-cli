@@ -46,7 +46,7 @@ def test_summarize_passes_through_error_dict():
 def test_summarize_calls_read_file_content_with_correct_args():
     with patch("bb.tools.ai_tools.read_file_content", return_value=MOCK_FILE_CONTENT) as mock_fn:
         summarize_content(course="BTP200", filename="week3.pdf")
-    mock_fn.assert_called_once_with(course="BTP200", filename="week3.pdf")
+    mock_fn.assert_called_once_with(course="BTP200", filename="week3.pdf", offset=0)
 
 
 def test_summarize_passes_through_not_a_pdf_error():
