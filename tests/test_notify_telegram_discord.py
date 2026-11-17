@@ -26,14 +26,14 @@ def test_telegram_calls_correct_url_and_payload():
         assert payload["chat_id"] == "CHAT_456"
         assert "Deadline soon" in payload["text"]
         assert "Assignment 1 is due in 2 hours" in payload["text"]
-        assert payload["parse_mode"] == "Markdown"
+        assert "parse_mode" not in payload
 
 
 def test_telegram_high_priority_prefixes_title():
     with patch("bb.notify.telegram.httpx.post") as mock_post:
         tg.notify(token="TOK", chat_id="CID", title="Grade posted", body="95/100", priority="high")
         payload = mock_post.call_args.kwargs["json"]
-        assert payload["text"].startswith("**🔴 Grade posted**")
+        assert payload["text"].startswith("🔴 Grade posted\n")
 
 
 def test_telegram_default_priority_no_prefix():
@@ -41,7 +41,7 @@ def test_telegram_default_priority_no_prefix():
         tg.notify(token="TOK", chat_id="CID", title="New announcement", body="Notes", priority="default")
         payload = mock_post.call_args.kwargs["json"]
         assert "🔴" not in payload["text"]
-        assert "**New announcement**" in payload["text"]
+        assert payload["text"].startswith("New announcement\n")
 
 
 def test_telegram_empty_token_no_http_call():
@@ -98,3 +98,11 @@ def test_discord_empty_webhook_url_no_http_call():
 def test_discord_httpx_exception_is_silent():
     with patch("bb.notify.discord.httpx.post", side_effect=ConnectionError("refused")):
         dc.notify(webhook_url="https://discord.com/api/webhooks/1/x", title="T", body="B")
+
+
+def test_telegram_sends_plain_text_unchanged():
+    with patch("bb.notify.telegram.httpx.post") as mock_post:
+        tg.notify(token="TOK", chat_id="CID", title="Lab_05 *draft*", body="b_c")
+        payload = mock_post.call_args.kwargs["json"]
+        assert payload["text"] == "Lab_05 *draft*\nb_c"
+        assert "parse_mode" not in payload
