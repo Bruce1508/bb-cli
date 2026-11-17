@@ -91,7 +91,7 @@ def test_auto_setup_prints_unsupported_on_windows(tmp_path):
 
 def test_auto_setup_prints_interval_in_output(tmp_path):
     result = _invoke(tmp_path, platform="darwin", interval=4)
-    assert "4" in result.output
+    assert "Auto-sync every 4h" in result.output
 
 
 # ---------------------------------------------------------------------------

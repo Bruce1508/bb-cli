@@ -2,6 +2,16 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolated_bb_dir(tmp_path, monkeypatch):
+    """Chat history and tool DB reads go to tmp_path: never the student's real ~/.bb."""
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.db.BB_DIR", tmp_path)
 
 
 def test_aiconfig_defaults():
@@ -56,9 +66,10 @@ def test_build_ollama_tools_schema_shape():
         assert tool["function"]["parameters"]["type"] == "object"
 
 
-def test_dispatch_tool_known():
+def test_dispatch_tool_known(tmp_path, monkeypatch):
     """dispatch_tool calls a real tool function and returns JSON string."""
     import json
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
     from bb.ai.chat import dispatch_tool
     result = dispatch_tool("get_course_list", {})
     parsed = json.loads(result)
@@ -82,6 +93,44 @@ def test_dispatch_tool_graceful_when_db_missing(tmp_path, monkeypatch):
     result = dispatch_tool("get_upcoming_deadlines", {"days": 7})
     parsed = json.loads(result)
     assert parsed == []  # graceful empty, not an error
+
+
+def _done(*a, **kw):
+    import subprocess
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout="ok\n", stderr="")
+
+
+def test_dispatch_tool_coerces_string_bool(tmp_path, monkeypatch):
+    """{"full": "false"} from the LLM must mean a FAST sync, not a truthy full one."""
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    from bb.ai.chat import dispatch_tool
+    with patch("bb.tools.actions.subprocess.run", side_effect=_done) as run:
+        dispatch_tool("sync_now", {"full": "false"})
+    assert "--ical-only" in run.call_args.args[0]
+
+
+def test_dispatch_tool_coerces_string_int(tmp_path, monkeypatch):
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    (tmp_path / "files" / "X").mkdir(parents=True)
+    (tmp_path / "files" / "X" / "f.pdf").touch()
+    page = MagicMock()
+    page.extract_text.return_value = "a" * 9000
+    pdf = MagicMock(pages=[page])
+    pdf.__enter__ = lambda s: s
+    from bb.ai.chat import dispatch_tool
+    with patch("bb.tools.queries.pdfplumber.open", return_value=pdf):
+        parsed = json.loads(dispatch_tool(
+            "read_file_content", {"course": "X", "filename": "f", "offset": "8000"}))
+    assert parsed["offset"] == 8000 and parsed["text"] == "a" * 1000
+
+
+def test_dispatch_tool_rejects_bad_types(tmp_path, monkeypatch):
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    from bb.ai.chat import dispatch_tool
+    with patch("bb.tools.actions.subprocess.run", side_effect=_done) as run:
+        parsed = json.loads(dispatch_tool("sync_now", {"full": "banana"}))
+    assert "error" in parsed
+    run.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -591,13 +640,15 @@ def test_ollama_turn_max_tool_rounds_exhausted(monkeypatch):
     assert engine._msgs[-1] == {"role": "assistant", "content": result}
 
 
-def test_handle_slash_sync(monkeypatch):
+def test_handle_slash_sync(monkeypatch, tmp_path):
     """/sync calls subprocess with sys.executable and reports success/failure."""
     import sys
     from io import StringIO
     from unittest.mock import MagicMock, patch
     from rich.console import Console
 
+    # Engine history and sync_now's recent_changes both read BB_DIR: never the real ~/.bb.
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
     mock_pkg = MagicMock()
     m1 = MagicMock()
     m1.model = "qwen3:8b"
@@ -625,6 +676,21 @@ def test_handle_slash_sync(monkeypatch):
         mock_run.return_value = MagicMock(returncode=1)
         _handle_slash("/sync", engine, con2)
     assert "Sync failed" in buf2.getvalue() or "⚠" in buf2.getvalue()
+
+
+def test_handle_slash_sync_reports_a_skip(tmp_path, monkeypatch):
+    from io import StringIO
+
+    from rich.console import Console
+
+    from bb.ai.chat import _handle_slash
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    buf = StringIO()
+    with patch("bb.tools.actions.sync_now",
+               return_value={"ok": False, "skipped": True, "full": False, "output": ""}):
+        _handle_slash("/sync", MagicMock(), Console(file=buf))
+    assert "⏸ Sync skipped — another sync is running." in buf.getvalue()
+    assert "failed" not in buf.getvalue()
 
 
 # ---------------------------------------------------------------------------
@@ -673,7 +739,7 @@ def test_history_loaded_on_init(monkeypatch, tmp_path):
 
     from bb.ai.chat import ChatEngine
     from bb.config import BBConfig
-    engine = ChatEngine(BBConfig())
+    engine = ChatEngine(BBConfig(), resume=True)
 
     # system + 2 history messages
     assert len(engine._msgs) == 3
@@ -732,7 +798,7 @@ def test_clear_history_wipes_file(monkeypatch, tmp_path):
 
     from bb.ai.chat import ChatEngine
     from bb.config import BBConfig
-    engine = ChatEngine(BBConfig())
+    engine = ChatEngine(BBConfig(), resume=True)
     assert len(engine._msgs) == 3  # system + 2 history
 
     engine.clear_history()
@@ -812,3 +878,86 @@ def test_estimate_study_time_does_not_promise_final_exam_math():
 def test_system_prompt_forbids_grade_weight_math():
     from bb.ai.prompts import SYSTEM_PROMPT
     assert "weights are unknown" in SYSTEM_PROMPT
+
+
+def test_new_session_does_not_load_old_history(monkeypatch, tmp_path):
+    import sys
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.ai.chat._config_module.BB_DIR", tmp_path)
+    (tmp_path / "chat_history.json").write_text(
+        json.dumps([{"role": "user", "content": "old"}, {"role": "assistant", "content": "a"}])
+    )
+    monkeypatch.setitem(sys.modules, "ollama", _make_mock_ollama_module())
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+    from bb.ai.chat import ChatEngine
+    from bb.config import BBConfig
+    engine = ChatEngine(BBConfig())
+    assert len(engine._msgs) == 1
+    assert engine.resume_history() == 2
+    assert engine._msgs[1]["content"] == "old"
+
+
+def _resume_engine(monkeypatch, tmp_path, prepopulate=True):
+    import sys
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.ai.chat._config_module.BB_DIR", tmp_path)
+    if prepopulate:
+        (tmp_path / "chat_history.json").write_text(
+            json.dumps([{"role": "user", "content": "old"}, {"role": "assistant", "content": "olda"}])
+        )
+    monkeypatch.setitem(sys.modules, "ollama", _make_mock_ollama_module())
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+    from bb.ai.chat import ChatEngine
+    from bb.config import BBConfig
+    return ChatEngine(BBConfig())
+
+
+def test_resume_after_turn_does_not_duplicate(monkeypatch, tmp_path):
+    engine = _resume_engine(monkeypatch, tmp_path)
+    engine._msgs += [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
+    engine._save_history("q", "a")
+    assert engine.resume_history() == 2
+    assert [m["content"] for m in engine._msgs[1:]] == ["old", "olda", "q", "a"]
+
+
+def test_resume_twice_is_noop(monkeypatch, tmp_path):
+    engine = _resume_engine(monkeypatch, tmp_path)
+    assert engine.resume_history() == 2
+    n = len(engine._msgs)
+    assert engine.resume_history() == 0
+    assert len(engine._msgs) == n
+
+
+def test_resume_after_clear_returns_zero(monkeypatch, tmp_path):
+    engine = _resume_engine(monkeypatch, tmp_path)
+    engine.clear_history()
+    assert engine.resume_history() == 0
+    assert len(engine._msgs) == 1
+
+
+def test_slash_resume_without_history_says_so(monkeypatch, tmp_path):
+    import io
+
+    from rich.console import Console
+
+    from bb.ai.chat import _handle_slash
+    engine = _resume_engine(monkeypatch, tmp_path, prepopulate=False)
+    buf = io.StringIO()
+    _handle_slash("/resume", engine, Console(file=buf, width=200))
+    assert "No earlier conversation found." in buf.getvalue()
+
+
+def test_slash_sync_uses_sync_now():
+    import io
+    from unittest.mock import MagicMock, patch
+
+    from rich.console import Console
+
+    from bb.ai.chat import _handle_slash
+    con = Console(file=io.StringIO())
+    fake = {"ok": True, "full": False, "output": "✔ 3 deadlines (1 new)", "recent_changes": []}
+    with patch("bb.tools.actions.sync_now", return_value=fake) as s:
+        _handle_slash("/sync", MagicMock(), con)
+        _handle_slash("/sync full", MagicMock(), con)
+    assert [c.kwargs["full"] for c in s.call_args_list] == [False, True]
+    assert "3 deadlines" in con.file.getvalue()

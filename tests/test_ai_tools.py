@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from bb.tools.ai_tools import (
     estimate_study_time,
     extract_key_concepts,
@@ -27,6 +29,13 @@ MOCK_FILE_CONTENT = {"filename": "syllabus.pdf", "course": "BTI325", "text": "Co
 MOCK_FILE_ERROR = {"error": "file not found"}
 
 
+@pytest.fixture(autouse=True)
+def _isolated_bb_dir(tmp_path):
+    """The aggregators resolve the course against the DB: never the real ~/.bb."""
+    with patch("bb.config.BB_DIR", tmp_path):
+        yield
+
+
 # ---------------------------------------------------------------------------
 # summarize_content
 # ---------------------------------------------------------------------------
@@ -46,7 +55,7 @@ def test_summarize_passes_through_error_dict():
 def test_summarize_calls_read_file_content_with_correct_args():
     with patch("bb.tools.ai_tools.read_file_content", return_value=MOCK_FILE_CONTENT) as mock_fn:
         summarize_content(course="BTP200", filename="week3.pdf")
-    mock_fn.assert_called_once_with(course="BTP200", filename="week3.pdf")
+    mock_fn.assert_called_once_with(course="BTP200", filename="week3.pdf", offset=0)
 
 
 def test_summarize_passes_through_not_a_pdf_error():

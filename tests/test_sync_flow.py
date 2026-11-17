@@ -203,9 +203,9 @@ def test_sync_ical_reraises_http_status_error(tmp_path):
 def test_sync_stream_returns_tuple_of_three(tmp_path):
     adapter = MagicMock()
     adapter.fetch_activity_stream.return_value = []
-    with Database(tmp_path / "bb.db") as db:
+    with Database(tmp_path / "bb.db") as db, patch("bb.config.BB_DIR", tmp_path):
         db.setup()
-        result = sync_stream(adapter, db)
+        result = sync_stream(adapter, db)  # 0 items → saves a snapshot under BB_DIR
     assert len(result) == 3
 
 

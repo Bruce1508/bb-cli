@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -126,7 +127,14 @@ class SessionManager:
         stored = self._get_key_from_keyring()
         if stored is not None:
             return stored
-        # Keyring unavailable or empty — derive from user password
+        # Keyring unavailable or empty — derive from user password.
+        # Without a terminal (MCP stdio, chat subprocess, cron) a prompt would write to
+        # stdout and read stdin, corrupting the protocol stream or hanging.
+        if not sys.stdin.isatty():
+            raise SessionError(
+                "Keyring unavailable and no terminal to ask for a password — "
+                "run bb auth in a terminal."
+            )
         import typer
 
         password = typer.prompt("Session password (used to encrypt your session)", hide_input=True)

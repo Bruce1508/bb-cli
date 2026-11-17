@@ -109,8 +109,11 @@ def dispatch_tool(name: str, args: dict) -> str:
     fn = TOOL_REGISTRY.get(name)
     if fn is None:
         return json.dumps({"error": f"Unknown tool: {name}"})
+    from pydantic import validate_call
+
     try:
-        result = fn(**args)
+        # LLM args are raw JSON: coerce "false"/"8000" to the annotated type, reject junk.
+        result = validate_call(fn)(**args)
         return json.dumps(result, default=str)
     except Exception as exc:
         return json.dumps({"error": str(exc)})
@@ -136,6 +139,9 @@ _TOOL_LABELS: dict[str, str] = {
     "extract_key_concepts": "Collecting course materials",
     "estimate_study_time": "Analyzing grades and deadlines",
     "get_recent_changes": "Checking what changed",
+    "sync_now": "Syncing Blackboard",
+    "refresh_course_content": "Fetching course content",
+    "download_course_file": "Downloading file",
 }
 
 
@@ -166,11 +172,14 @@ def _tool_label(name: str) -> str:
 class ChatEngine:
     """Manages conversation history and routes turns to the Ollama provider."""
 
-    def __init__(self, cfg: "BBConfig") -> None:  # noqa: F821
+    def __init__(self, cfg: "BBConfig", resume: bool = False) -> None:  # noqa: F821
         self._cfg = cfg
         self.provider, self.model = self._detect_provider()
         self._msgs: list[dict] = []
-        self._reset_history()
+        # Snapshot before any turn is saved, so /resume never re-reads this session's turns.
+        self._prior_history: list[dict] = self._load_history()
+        self._resumed = resume
+        self._reset_history(resume)
 
     def _history_path(self) -> Path:
         return _config_module.BB_DIR / "chat_history.json"
@@ -203,16 +212,26 @@ class ChatEngine:
         except Exception as exc:
             logger.debug("chat_history: could not save: %s", exc)
 
-    def _reset_history(self) -> None:
+    def _reset_history(self, resume: bool = False) -> None:
         from bb.ai.prompts import SYSTEM_PROMPT
         self._msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
-        # Inject persisted history after system prompt
-        self._msgs.extend(self._load_history())
+        if resume:
+            self._msgs.extend(self._prior_history)
+
+    def resume_history(self) -> int:
+        """Insert the persisted conversation before this session's turns. Returns count loaded."""
+        if self._resumed or not self._prior_history:
+            return 0
+        self._msgs = [self._msgs[0], *self._prior_history, *self._msgs[1:]]
+        self._resumed = True
+        return len(self._prior_history)
 
     def clear_history(self) -> None:
         """Reset conversation history to system prompt only and wipe the history file."""
         from bb.ai.prompts import SYSTEM_PROMPT
         self._msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self._prior_history = []
+        self._resumed = True
         path = self._history_path()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -371,12 +390,13 @@ class ChatEngine:
 # ---------------------------------------------------------------------------
 
 _SLASH_HELP = (
-    "  /exit, /quit — leave chat\n"
-    "  /clear       — reset conversation\n"
-    "  /sync        — run bb sync\n"
-    "  /courses     — list your courses\n"
-    "  /think       — toggle think mode (deep reasoning on/off)\n"
-    "  /help        — show this message"
+    "  /exit, /quit   — leave chat\n"
+    "  /clear         — reset conversation (also deletes saved history)\n"
+    "  /resume        — load your previous conversation\n"
+    "  /sync [full]   — quick deadline sync, or 'full' for grades + announcements\n"
+    "  /courses       — list your courses\n"
+    "  /think         — toggle think mode (deep reasoning on/off)\n"
+    "  /help          — show this message"
 )
 
 
@@ -384,6 +404,7 @@ def run_chat(
     query: str | None = None,
     cfg: "BBConfig | None" = None,
     console: "Console | None" = None,
+    resume: bool = False,
 ) -> None:
     """Entry point for `bb chat`. Pass query for single-shot; omit for REPL."""
     from rich.console import Console as RichConsole
@@ -394,7 +415,7 @@ def run_chat(
         cfg = load_config()
     con = console or RichConsole()
 
-    engine = ChatEngine(cfg)
+    engine = ChatEngine(cfg, resume=resume)
 
     if engine.provider == "none":
         con.print(NO_PROVIDER_HELP, markup=False, highlight=False)
@@ -413,10 +434,10 @@ def run_chat(
     con.print("[dim]Type '/exit' to quit, '/help' for commands[/dim]")
 
     # First-run hint: show example queries when there is no prior history
-    if len(engine._msgs) == 1:  # only system prompt = fresh session
+    if not resume:
         con.print(
             "[dim]  Try: 'what's due this week?' · 'any new announcements?'"
-            " · 'show my grades'[/dim]"
+            " · 'show my grades' · '/resume' to continue last chat[/dim]"
         )
     con.print()
 
@@ -456,17 +477,25 @@ def _handle_slash(cmd_line: str, engine: "ChatEngine", con: "Console") -> bool:
         con.print("[dim]Conversation cleared.[/dim]")
 
     elif cmd == "/sync":
-        import subprocess
-        import sys
-        con.print("[dim]Running bb sync...[/dim]")
-        result = subprocess.run(
-            [sys.executable, "-m", "bb.cli", "sync"],
-            capture_output=True, text=True,
-        )
-        if result.returncode == 0:
-            con.print("[green]✔[/green] Sync complete.")
+        from bb.tools.actions import sync_now
+        full = "full" in cmd_line.lower().split()[1:]
+        what = "everything (1-2 min)" if full else "deadlines"
+        con.print(f"[dim]Syncing {what}...[/dim]")
+        result = sync_now(full=full)
+        if result.get("skipped"):
+            con.print("⏸ Sync skipped — another sync is running.")
         else:
-            con.print("[yellow]⚠[/yellow] Sync failed — try `bb sync` from terminal.")
+            icon = "[green]✔[/green]" if result["ok"] else "[yellow]⚠[/yellow]"
+            con.print(f"{icon} Sync {'complete' if result['ok'] else 'failed'}")
+        if result["output"]:
+            con.print(result["output"], markup=False, highlight=False, style="dim")
+
+    elif cmd == "/resume":
+        n = engine.resume_history()
+        if n:
+            con.print(f"[dim]Loaded {n} earlier messages.[/dim]")
+        else:
+            con.print("[dim]No earlier conversation found.[/dim]")
 
     elif cmd == "/courses":
         from bb.tools.queries import get_course_list

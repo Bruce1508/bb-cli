@@ -5,6 +5,7 @@ import re
 import subprocess
 import time
 import webbrowser
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
@@ -19,7 +20,13 @@ import bb.config as _config_module
 from bb.auto_setup import install_auto_sync, uninstall_auto_sync
 from bb.config import BBConfig, NotificationConfig, load_config, save_config
 from bb.db import Database
-from bb.downloader import Downloader, DownloadError
+from bb.downloader import (
+    Downloader,
+    ambiguous_filenames,
+    collect_downloadable,
+    download_items,
+    ext_from_url,
+)
 from bb.notify import dispatch_notify
 from bb.parsers.ical import ICalParseError, parse_ical
 
@@ -312,6 +319,7 @@ def due(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON array"),
 ) -> None:
     """Show upcoming deadlines."""
+    course = _course_arg(course)
     if not output_json:
         _warn_if_session_stale()
     BB_DIR = _config_module.BB_DIR
@@ -504,6 +512,32 @@ def _run_proactive(cfg: BBConfig, db_path: Path, digest: bool = True) -> None:
         console.print(f"[yellow]⚠[/yellow] Daily digest failed: {exc}")
 
 
+_EX_TEMPFAIL = 75  # sysexits.h: try again later — `bb sync` skipped because the lock is held
+
+
+@contextmanager
+def _sync_lock():
+    """Exclusive, non-blocking lock so a chat/MCP sync can't race the scheduled one.
+
+    Yields True when acquired. The lock is released when the file closes (also on crash).
+    Platforms without fcntl (Windows) yield True — auto-sync isn't supported there anyway.
+    """
+    try:
+        import fcntl
+    except ImportError:
+        yield True
+        return
+    bb_dir = _config_module.BB_DIR
+    bb_dir.mkdir(parents=True, exist_ok=True)
+    with open(bb_dir / "sync.lock", "w") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        yield True
+
+
 @app.command()
 def sync(
     ical_only: bool = typer.Option(
@@ -517,6 +551,28 @@ def sync(
     ),
 ) -> None:
     """Sync deadlines, announcements, and grades from Blackboard."""
+    with _sync_lock() as acquired:
+        if not acquired:
+            console.print("[dim]Another bb sync is running — skipped.[/dim]")
+            raise typer.Exit(code=_EX_TEMPFAIL)  # not 0: chat/MCP/setup must not report success
+        _run_sync(ical_only=ical_only, dry_run=dry_run, refresh_only=refresh_only)
+
+
+def _course_arg(text: str | None) -> str | None:
+    """Resolve a user-typed course ('btp', 'web programming tools') to a course code.
+
+    Lazy import: fast startup. An ambiguous course prints the candidates and exits 1.
+    """
+    from bb.tools.queries import resolve_course
+
+    try:
+        return resolve_course(text)
+    except ValueError as exc:
+        console.print(f"[yellow]{escape(str(exc))}[/yellow]")
+        raise typer.Exit(1) from exc
+
+
+def _run_sync(ical_only: bool, dry_run: bool, refresh_only: bool) -> None:
     from bb.adapters.blackboard_ultra import BlackboardUltraAdapter
     from bb.security.session import SessionError, SessionManager
     from bb.sync import (
@@ -533,6 +589,7 @@ def sync(
     db_path = BB_DIR / "bb.db"
     total_new = 0
     session_dead = False
+    ical_failed = False
 
     # --- Preflight: verify session liveness before any Playwright work ---
     if not ical_only and not dry_run:
@@ -622,6 +679,7 @@ def sync(
             )
         except Exception as exc:
             console.print(f"[yellow]⚠[/yellow] iCal sync failed: {exc}")
+            ical_failed = True
             with Database(db_path) as db:
                 db.setup()
                 db.log_sync("ical", 0, 0, error=str(exc))
@@ -632,7 +690,7 @@ def sync(
         # full sync: the digest waits for the end-of-sync call, after all phases
         _run_proactive(cfg, db_path, digest=ical_only)
     if ical_only or dry_run:
-        if session_dead:
+        if session_dead or ical_failed:  # iCal was the whole job, so its failure is the sync's
             raise typer.Exit(code=1)
         return
 
@@ -779,6 +837,7 @@ def auto_setup(
             platform, msg = install_auto_sync(interval_hours=interval_hours)
             console.print(f"[green]✔[/green] Detected: {platform}")
             console.print(msg)
+            console.print(f"[green]✔[/green] Auto-sync every {interval_hours}h.")
         except RuntimeError as exc:
             console.print(f"[yellow]⚠[/yellow] {exc}")
             raise typer.Exit(code=1)
@@ -790,6 +849,7 @@ def grades(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON array"),
 ) -> None:
     """Show grades from the database."""
+    course = _course_arg(course)
     if not output_json:
         _warn_if_session_stale()
     BB_DIR = _config_module.BB_DIR
@@ -907,6 +967,7 @@ def changes(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON array"),
 ) -> None:
     """Show what changed on Blackboard (moved deadlines, posted/changed grades)."""
+    course = _course_arg(course)
     BB_DIR = _config_module.BB_DIR
     with Database(BB_DIR / "bb.db") as db:
         db.setup()
@@ -998,6 +1059,7 @@ def course(
     refresh: bool = typer.Option(False, "--refresh", help="Force re-scrape"),
 ) -> None:
     """Browse course content."""
+    course_code = _course_arg(course_code) or course_code.upper()
     import bb.cache as cache
     from bb.adapters.blackboard_ultra import BlackboardUltraAdapter
     from bb.security.session import SessionManager
@@ -1063,34 +1125,6 @@ def cache_clear(
         console.print(f"[green]✔[/green] Cleared cache for {count} course(s).")
 
 
-def _ext_from_url(url: str | None) -> str:
-    """Extract file extension from URL: 'https://host/file.pdf?x=1' → '.pdf'."""
-    if not url:
-        return ""
-    path_part = url.split("?")[0].split("/")[-1]
-    return ("." + path_part.rsplit(".", 1)[-1]) if "." in path_part else ""
-
-
-def _collect_downloadable(items: list) -> list:
-    """DFS: return all ContentItems that have a download_url set."""
-    result = []
-    for item in items:
-        if item.download_url:
-            result.append(item)
-        result.extend(_collect_downloadable(item.children))
-    return result
-
-
-def _find_items_by_title(items: list, query: str) -> list:
-    """DFS: return all ContentItems whose title contains query (case-insensitive)."""
-    result = []
-    for item in items:
-        if query.lower() in item.title.lower():
-            result.append(item)
-        result.extend(_find_items_by_title(item.children, query))
-    return result
-
-
 @app.command()
 def download(
     course_code: str = typer.Argument(..., help="Course code, e.g. BTP200"),
@@ -1100,8 +1134,9 @@ def download(
     item_name: str | None = typer.Argument(None, help="Specific item name (substring match)"),
 ) -> None:
     """Download course files to ~/.bb/files/<COURSE>/."""
+    course_code = _course_arg(course_code) or course_code.upper()
     import bb.cache as cache
-    from bb.security.session import SessionError, SessionManager
+    from bb.security.session import SessionManager
 
     BB_DIR = _config_module.BB_DIR
     tree = cache.load_tree(course_code)
@@ -1112,7 +1147,7 @@ def download(
         )
         raise typer.Exit(1)
 
-    candidates = _collect_downloadable(tree.items)
+    candidates = collect_downloadable(tree.items)
 
     # Require --all or item_name
     if not all_files and not item_name:
@@ -1128,7 +1163,7 @@ def download(
         ft = file_type.lower()
 
         def _type_match(item) -> bool:
-            ext = _ext_from_url(item.download_url).lstrip(".")
+            ext = ext_from_url(item.download_url).lstrip(".")
             if ext == ft:
                 return True
             return bool(item.mime_type and ft in item.mime_type.lower())
@@ -1146,42 +1181,34 @@ def download(
     if dry_run:
         console.print(f"[bold]Would download {len(candidates)} file(s):[/bold]")
         for item in candidates:
-            ext = _ext_from_url(item.download_url)
+            ext = ext_from_url(item.download_url)
             console.print(f"  {item.title}{ext}")
         raise typer.Exit(0)
 
     dest_dir = BB_DIR / "files" / course_code.upper()
     sm = SessionManager(BB_DIR / "session.enc")
     downloader = Downloader(sm)
-    downloaded = skipped = failed = 0
 
     console.print(f"📥 [bold]{course_code.upper()}[/bold] — Downloading files")
 
+    def _show(kind: str, name: str, detail: str) -> None:
+        if kind == "skipped":
+            console.print(f"  [dim]⏩ {name}  {detail}[/dim]")
+        elif kind == "saved":
+            console.print(f"  [green]✔[/green] {name}  {detail}")
+        else:
+            console.print(f"  [yellow]⚠[/yellow]  {name}  {detail}")
+
     with Database(BB_DIR / "bb.db") as db:
         db.setup()
-        for item in candidates:
-            ext = _ext_from_url(item.download_url)
-            filename = item.title.replace("/", "_") + ext
-            dest_check = dest_dir / filename
-
-            if dest_check.exists() and dest_check.stat().st_size > 0:
-                console.print(f"  [dim]⏩ {filename}  already downloaded[/dim]")
-                skipped += 1
-                continue
-
-            try:
-                saved = downloader.download(item.download_url, dest_dir, filename)
-                size = saved.stat().st_size
-                db.record_download(course_code, saved.name, str(saved), size)
-                console.print(f"  [green]✔[/green] {saved.name}  {size // 1024} KB")
-                downloaded += 1
-            except (DownloadError, SessionError) as e:
-                console.print(f"  [yellow]⚠[/yellow]  {filename}  {e}")
-                failed += 1
+        report = download_items(
+            candidates, course_code, dest_dir, downloader, db, on_event=_show,
+            ambiguous_names=ambiguous_filenames(tree.items),
+        )
 
     console.print(
-        f"[green]✔[/green] {downloaded} downloaded, {skipped} skipped, {failed} failed"
-        f"  →  [dim]{dest_dir}[/dim]"
+        f"[green]✔[/green] {len(report.saved)} downloaded, {len(report.skipped)} skipped, "
+        f"{len(report.failed)} failed  →  [dim]{dest_dir}[/dim]"
     )
 
 
@@ -1191,7 +1218,9 @@ def open_item(
     item_name: str = typer.Argument(..., help="Item title (substring match)"),
 ) -> None:
     """Open a course item in the browser."""
+    course_code = _course_arg(course_code) or course_code.upper()
     import bb.cache as cache
+    from bb.models.content import find_items
 
     tree = cache.load_tree(course_code)
     if tree is None:
@@ -1201,7 +1230,7 @@ def open_item(
         )
         raise typer.Exit(1)
 
-    matches = _find_items_by_title(tree.items, item_name)
+    matches = find_items(tree.items, item_name)
 
     if not matches:
         console.print(f"[yellow]No item matching '[bold]{item_name}[/bold]' found.[/yellow]")
@@ -1223,10 +1252,11 @@ def open_item(
 @app.command()
 def chat(
     query: Optional[str] = typer.Argument(None, help="Ask a single question (omit for REPL)"),
+    resume: bool = typer.Option(False, "--resume", "-r", help="Continue the previous conversation"),
 ) -> None:
     """Chat with your AI assistant — ask about deadlines, grades, and course content."""
     from bb.ai.chat import run_chat
-    run_chat(query=query, cfg=load_config(), console=console)
+    run_chat(query=query, cfg=load_config(), console=console, resume=resume)
 
 
 @app.command(name="mcp-server")
@@ -1288,11 +1318,17 @@ def setup() -> None:
         ("3/4 Blackboard login", _auth_if_needed),
         ("4/4 First sync", lambda: sync(ical_only=False, dry_run=False, refresh_only=False)),
     ]
+    sync_skipped = False
     for label, step in steps:
         console.rule(f"[bold]{label}[/bold]")
         try:
             step()
         except (typer.Exit, typer.Abort, KeyboardInterrupt) as exc:
+            if isinstance(exc, typer.Exit) and exc.exit_code == _EX_TEMPFAIL:
+                # A scheduled sync already holds the lock; it is doing this first sync.
+                console.print("[dim]A sync is already running — it will do the first sync.[/dim]")
+                sync_skipped = True
+                continue
             if not isinstance(exc, typer.Exit) or exc.exit_code:
                 console.print(
                     f"[red]✘[/red] {label} failed. Fix the error above, then run "
@@ -1300,7 +1336,7 @@ def setup() -> None:
                 )
                 raise
 
-    if not _first_sync_succeeded(started):
+    if not sync_skipped and not _first_sync_succeeded(started):
         console.print(
             "[red]✘[/red] First sync didn't succeed — fix the errors above, then run "
             "[bold]bb setup[/bold] again."

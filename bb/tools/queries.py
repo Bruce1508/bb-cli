@@ -9,6 +9,8 @@ Each function:
 
 from __future__ import annotations
 
+import re
+
 import pdfplumber
 
 import bb.config as _config_module
@@ -27,9 +29,7 @@ def get_upcoming_deadlines(days: int = 14, course: str | None = None) -> list[di
             None to get deadlines for ALL courses. Do NOT pass 'all' — pass None.
     """
     BB_DIR = _config_module.BB_DIR
-    # Normalize LLM-generated sentinel values that mean "no filter"
-    if course and course.lower() in ("all", "any", "*", "none"):
-        course = None
+    course = resolve_course(course)
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
@@ -75,9 +75,7 @@ def get_grades(course: str | None = None) -> list[dict]:
             None to get grades for ALL courses. Do NOT pass 'all' — pass None.
     """
     BB_DIR = _config_module.BB_DIR
-    # Normalize LLM-generated sentinel values that mean "no filter"
-    if course and course.lower() in ("all", "any", "*", "none"):
-        course = None
+    course = resolve_course(course)
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
@@ -104,6 +102,7 @@ def get_grades(course: str | None = None) -> list[dict]:
 
 
 _ANN_BODY_MAX = 1500  # chars per announcement sent to the LLM
+_READ_CHUNK = 8000  # chars per read_file_content page
 
 
 def get_announcements(
@@ -123,9 +122,7 @@ def get_announcements(
     """
     BB_DIR = _config_module.BB_DIR
     limit = max(1, min(limit, 30))
-    # Normalize LLM-generated sentinel values that mean "no filter"
-    if course and course.lower() in ("all", "any", "*", "none"):
-        course = None
+    course = resolve_course(course)
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
@@ -168,6 +165,55 @@ def get_course_list() -> list[str]:
         return []
 
     return [r[0] for r in rows]
+
+
+_NO_FILTER = {"", "all", "any", "*", "none", "null"}
+
+
+def _course_names() -> dict[str, str]:
+    """course_code → display_name from course_map ({} if DB missing)."""
+    try:
+        with Database(_config_module.BB_DIR / "bb.db") as db:
+            db.setup()
+            rows = db._conn.execute(
+                "SELECT course_code, display_name FROM course_map"
+            ).fetchall()
+    except Exception:
+        return {}
+    return {r[0]: r[1] for r in rows if r[1]}
+
+
+def resolve_course(text: str | None) -> str | None:
+    """Map loose course text ('btp', 'web programming tools') to a course code.
+
+    None / 'all' / 'any' / '*' / 'none' / '' mean "no filter" → None.
+    Unique match on code substring, then on display name → that code.
+    Several matches → ValueError naming them, so the caller can ask which one.
+    No match → text.upper() stripped to [A-Z0-9_-] (never a path), so filters
+    return nothing rather than everything.
+    """
+    if text is None or text.strip().lower() in _NO_FILTER:
+        return None
+    query = text.strip()
+    # Callers use the code as a path component (files/<code>), so it may only hold safe chars.
+    safe = re.sub(r"[^A-Z0-9_-]", "", query.upper())
+    if not safe:
+        return "NONE"
+    codes = get_course_list()
+    if safe in codes:
+        return safe
+    for hits in (
+        [c for c in codes if safe in c.upper()],
+        [code for code, name in _course_names().items() if query.lower() in name.lower()],
+    ):
+        if len(hits) == 1:
+            return hits[0]
+        if hits:
+            raise ValueError(
+                f"Ambiguous course '{text}': matches {', '.join(sorted(hits))}. "
+                "Use one of these codes."
+            )
+    return safe
 
 
 def get_sync_status() -> dict:
@@ -215,7 +261,7 @@ def get_course_content(course: str) -> dict:
     from bb.cache import load_tree
     from bb.models.content import content_tree_to_dict
 
-    tree = load_tree(course.upper())
+    tree = load_tree(resolve_course(course) or course.upper())
     if tree is None:
         return {}
     return content_tree_to_dict(tree)
@@ -236,6 +282,8 @@ def search_content(query: str, course: str | None = None) -> list[dict]:
     import json
 
     from bb.models.content import content_tree_from_dict
+
+    course = resolve_course(course)
 
     cache_dir = _config_module.BB_DIR / "cache"  # resolved at call time, not import time
     results: list[dict] = []
@@ -287,6 +335,7 @@ def list_downloaded_files(course: str | None = None) -> list[dict]:
         course: Optional course code filter. Case-insensitive.
     """
     BB_DIR = _config_module.BB_DIR
+    course = resolve_course(course)  # outside the try: an ambiguous course must reach the caller
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
@@ -295,22 +344,26 @@ def list_downloaded_files(course: str | None = None) -> list[dict]:
         return []
 
 
-def read_file_content(course: str, filename: str) -> dict:
+def read_file_content(course: str, filename: str, offset: int = 0) -> dict:
     """Extract text content from a downloaded PDF file.
 
     Use when student asks to summarize, explain, or quote from a specific course file.
-    Returns the full text (capped at 8000 chars to fit LLM context).
+    Returns up to 8000 characters starting at offset; if the result has "next_offset",
+    call again with it to keep reading.
 
     Args:
         course: Course code (e.g. 'BTP200').
         filename: Exact or partial filename. Case-insensitive substring match.
+        offset: Character position to start reading from (default 0).
 
     Returns:
-        {"filename", "course", "text", "pages", "char_count", "truncated"}
+        {"filename", "course", "text", "pages", "char_count", "offset", "truncated"}
+        plus "next_offset" when more text remains
         {"error": "file not found"} if no match
         {"error": "not a PDF"} if file extension is not .pdf
         {"error": "unreadable: <reason>"} if pdfplumber fails
     """
+    course = resolve_course(course) or course.upper()
     BB_DIR = _config_module.BB_DIR
     files_dir = BB_DIR / "files" / course.upper()
     if not files_dir.exists():
@@ -329,15 +382,20 @@ def read_file_content(course: str, filename: str) -> dict:
             text = "\n".join(p.extract_text() or "" for p in pdf.pages)
     except Exception as e:
         return {"error": f"unreadable: {e}"}
-    truncated = len(text) > 8000
-    return {
+    offset = max(0, offset)
+    end = offset + _READ_CHUNK
+    result = {
         "filename": match.name,
         "course": course.upper(),
-        "text": text[:8000],
+        "text": text[offset:end],
         "pages": page_count,
         "char_count": len(text),
-        "truncated": truncated,
+        "offset": offset,
+        "truncated": end < len(text),
     }
+    if result["truncated"]:
+        result["next_offset"] = end
+    return result
 
 
 def get_recent_changes(days: int = 7, course: str | None = None) -> list[dict]:
@@ -354,8 +412,7 @@ def get_recent_changes(days: int = 7, course: str | None = None) -> list[dict]:
             all courses. Do NOT pass 'all' — pass None.
     """
     BB_DIR = _config_module.BB_DIR
-    if course and course.lower() in ("all", "any", "*", "none"):
-        course = None
+    course = resolve_course(course)
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
