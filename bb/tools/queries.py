@@ -378,7 +378,8 @@ def get_briefing() -> dict:
     'what should I do today', 'catch me up', or 'anything I need to know'.
     Combines deadlines due in the next 48 hours, how many more are due this week,
     recent changes (moved deadlines, new grades), unread announcements, and the
-    last sync time.
+    last sync time. urgent_deadlines also includes items that became overdue in the
+    last few hours (their 'when' says 'was due …').
     """
     from datetime import datetime, timedelta, timezone
 
