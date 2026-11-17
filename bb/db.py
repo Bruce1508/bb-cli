@@ -427,6 +427,15 @@ class Database:
         ).fetchone()
         return row[0] if row else None
 
+    def set_download_url(self, course: str, filename: str, url: str) -> bool:
+        """Backfill the url of a legacy (pre-migration-7) row; True if such a row was updated."""
+        cur = self._conn.execute(
+            "UPDATE downloads SET url = ? WHERE course = UPPER(?) AND filename = ? AND url IS NULL",
+            (url, course, filename),
+        )
+        self._conn.commit()
+        return cur.rowcount > 0
+
     def get_downloads(self, course: str | None = None) -> list[dict]:
         """Return downloads, optionally filtered by course (case-insensitive)."""
         if course:

@@ -148,6 +148,16 @@ def already_downloaded(db: Database, course_code: str, url: str) -> str | None:
     return row[0] if path.is_file() and path.stat().st_size > 0 else None
 
 
+def _adopt_legacy(
+    db: Database, course_code: str, filename: str, url: str, dest_dir: Path
+) -> str | None:
+    """Backfill url on a url-less row for `filename` whose file is on disk; return its name."""
+    path = dest_dir / filename
+    if path.is_file() and path.stat().st_size > 0 and db.set_download_url(course_code, filename, url):
+        return filename
+    return None
+
+
 @dataclass
 class DownloadReport:
     saved: list[Path] = field(default_factory=list)
@@ -177,6 +187,10 @@ def download_items(
         filename = safe_filename(item)
         try:
             had = already_downloaded(db, course_code, url)
+            if not had and name_counts[filename] == 1:
+                # Pre-migration-7 rows have no url: adopt the plain-named file (safe only
+                # because no other item in this batch could own it).
+                had = _adopt_legacy(db, course_code, filename, url, dest_dir)
             if had:
                 report.skipped.append(had)
                 emit("skipped", had, "already downloaded")

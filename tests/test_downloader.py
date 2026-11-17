@@ -372,3 +372,36 @@ def test_session_cookies_are_not_sent_to_a_redirect_host(tmp_path):
     assert seen["learn.example.edu"] == "s_session_id=secret"
     assert seen["cdn.other.com"] is None
     assert (tmp_path / "f.pdf").read_bytes() == b"pdf"
+
+
+def _legacy_notes(tmp_path):
+    """A pre-migration-7 download: file on disk plus a row with url NULL."""
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    dest = tmp_path / "d"
+    dest.mkdir()
+    f = dest / "Notes.pdf"
+    f.write_bytes(b"x" * 2048)
+    db.record_download("BTP200", "Notes.pdf", str(f), 2048, url=None)
+    return db, dest
+
+
+def test_legacy_download_is_adopted_not_duplicated(tmp_path):
+    db, dest = _legacy_notes(tmp_path)
+    url = "https://h/a/notes.pdf"
+    report = download_items([ContentItem("file", "Notes", download_url=url)],
+                            "BTP200", dest, _FakeDL(), db)
+    assert report.saved == [] and report.skipped == ["Notes.pdf"]
+    assert [p.name for p in dest.iterdir()] == ["Notes.pdf"]
+    assert db.download_url_for_file("BTP200", "Notes.pdf") == url
+
+
+def test_legacy_download_is_not_adopted_when_batch_names_collide(tmp_path):
+    db, dest = _legacy_notes(tmp_path)
+    items = [ContentItem("file", "Notes", download_url="https://h/w1/n.pdf"),
+             ContentItem("file", "Notes", download_url="https://h/w2/n.pdf")]
+    report = download_items(items, "BTP200", dest, _FakeDL(), db)
+    assert report.skipped == [] and len(report.saved) == 2
+    assert all(p.name != "Notes.pdf" for p in report.saved)
+    assert db.download_url_for_file("BTP200", "Notes.pdf") is None
+
