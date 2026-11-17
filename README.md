@@ -73,22 +73,15 @@ flowchart LR
 
 ## ⚡ Quick start
 
-### 1. Install
+### 1. Install and set up
 
 ```bash
-python -m pip install blackboard-cli
-bb setup-browsers
+uv tool install blackboard-cli   # or: pipx install blackboard-cli
+bb setup                         # one-time: settings, login, first sync, auto-sync
+bb                               # what's due today
 ```
 
-Requires **Python 3.11+**. `bb setup-browsers` installs the Chromium build used for authentication and scraping.
-
-### 2. Connect Blackboard
-
-```bash
-bb init    # LMS URL, optional iCal feed, and notifications
-bb auth    # opens Chromium for login + MFA
-bb sync    # creates your local Blackboard snapshot
-```
+Requires **Python 3.11+**. `bb setup` walks through `bb init` (LMS URL, optional iCal feed, notifications), `bb setup-browsers` (the Chromium build used for authentication and scraping), `bb auth` (login + MFA), your first `bb sync`, and optional auto-sync. You can still run any of those steps on their own.
 
 ### 3. Use it
 

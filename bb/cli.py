@@ -1217,5 +1217,60 @@ def setup_browsers() -> None:
         raise typer.Exit(1)
 
 
+def _auth_if_needed() -> None:
+    """Skip the browser login when the saved session is still fresh (re-running setup)."""
+    from bb.security.session import SessionManager
+
+    sm = SessionManager(_config_module.BB_DIR / "session.enc")
+    if sm.check_session_age() == "fresh":
+        console.print("[green]✔[/green] Already logged in.")
+        return
+    auth()
+
+
+def _print_ai_status() -> None:
+    from bb.ai.providers.ollama import get_model, is_available
+
+    model = get_model(load_config().ai.model) if is_available() else None
+    if model:
+        console.print(f"[green]✔[/green] AI ready: {model} — try [bold]bb chat[/bold]")
+    else:
+        console.print(
+            "[yellow]⚠[/yellow] No local AI yet (optional, only needed for bb chat): "
+            "install https://ollama.com then run [bold]ollama pull qwen3:8b[/bold]"
+        )
+
+
+@app.command()
+def setup() -> None:
+    """One command to get going: settings → browser → login → first sync → auto-sync."""
+    steps = [
+        ("1/4 Settings", init),
+        ("2/4 Browser", setup_browsers),
+        ("3/4 Blackboard login", _auth_if_needed),
+        ("4/4 First sync", lambda: sync(ical_only=False, dry_run=False, refresh_only=False)),
+    ]
+    for label, step in steps:
+        console.rule(f"[bold]{label}[/bold]")
+        try:
+            step()
+        except typer.Exit as exc:
+            if exc.exit_code:
+                console.print(
+                    f"[red]✘[/red] {label} failed. Fix the error above, then run "
+                    "[bold]bb setup[/bold] again (finished steps are safe to repeat)."
+                )
+                raise
+
+    if typer.confirm("Sync automatically every few hours? (needed for reminders)", default=True):
+        auto_setup(disable=False, interval=0)
+    _print_ai_status()
+    console.print("\n[green]✔ Done.[/green] Run [bold]bb[/bold] any time to see what's due.")
+    console.print(
+        "[dim]Tip: add your Blackboard iCal URL to Google/Apple Calendar to see deadlines "
+        "there too.[/dim]"
+    )
+
+
 if __name__ == "__main__":
     app()
