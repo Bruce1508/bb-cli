@@ -831,6 +831,7 @@ def auto_setup(
             platform, msg = install_auto_sync(interval_hours=interval_hours)
             console.print(f"[green]✔[/green] Detected: {platform}")
             console.print(msg)
+            console.print(f"[green]✔[/green] Auto-sync every {interval_hours}h.")
         except RuntimeError as exc:
             console.print(f"[yellow]⚠[/yellow] {exc}")
             raise typer.Exit(code=1)
