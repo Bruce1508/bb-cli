@@ -167,6 +167,9 @@ def get_course_list() -> list[str]:
 
 
 _NO_FILTER = {"", "all", "any", "*", "none", "null"}
+# Text that names no course. Not in _NO_FILTER, so resolving it again gives it back:
+# resolution must be idempotent, because callers resolve and then pass the code on.
+NO_MATCH = "_NONE_"
 
 
 def _course_names() -> dict[str, str]:
@@ -198,8 +201,8 @@ def resolve_course(text: str | None) -> str | None:
     query = text.strip()
     # Callers use the code as a path component (files/<code>), so it may only hold safe chars.
     safe = re.sub(r"[^A-Z0-9_-]", "", query.upper())
-    if not safe:
-        return "NONE"
+    if not safe or safe.lower() in _NO_FILTER:  # "!!!", "all!" → still no course
+        return NO_MATCH
     codes = get_course_list()
     if safe in codes:
         return safe
@@ -267,7 +270,7 @@ def get_course_content(course: str) -> dict:
     from bb.cache import load_tree
     from bb.models.content import content_tree_to_dict
 
-    tree = load_tree(resolve_course(course) or course.upper())
+    tree = load_tree(resolve_course(course) or NO_MATCH)
     if tree is None:
         return {}
     return content_tree_to_dict(tree)
@@ -402,7 +405,7 @@ def read_file_content(course: str, filename: str, offset: int = 0) -> dict:
     course = resolve_course(course)
     # "all"/"none"/"*" resolve to no filter; a file read must name ONE course, never
     # fall through to every course's downloads.
-    if course is None or course == "NONE":
+    if course is None or course == NO_MATCH:
         return {"error": "file not found"}
     course = course.upper()
     files_root = _config_module.BB_DIR / "files"

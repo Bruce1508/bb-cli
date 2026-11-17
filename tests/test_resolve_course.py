@@ -139,3 +139,34 @@ def test_no_common_prefix_code_is_still_ambiguous(tmp_path, codes, text):
     _seed_codes(tmp_path, codes)
     with patch("bb.config.BB_DIR", tmp_path), pytest.raises(ValueError, match="Ambiguous"):
         resolve_course(text)
+
+
+@pytest.mark.parametrize("text", [
+    "all!", "any.", "a ll", "!!!", "*?", "null;", "xyz", "btp", "BTP200", "object", "frameworks",
+])
+def test_resolve_course_is_idempotent(courses, text):
+    """Callers resolve once and pass the code on; a second resolve must not widen it.
+
+    'all!' used to sanitize to 'ALL', which a second resolve read as "no filter".
+    """
+    once = resolve_course(text)
+    assert once is not None
+    assert resolve_course(once) == once
+
+
+@pytest.mark.parametrize("text", ["all", "all!", "!!!", "*"])
+def test_study_plan_never_spans_every_course(courses, text):
+    from bb.tools.ai_tools import generate_study_plan
+    plan = generate_study_plan(text)
+    assert plan["upcoming_deadlines"] == []  # BTP200's Lab 4 must not leak in
+
+
+@pytest.mark.parametrize("text", ["all", "all!", "!!!"])
+def test_action_tools_refuse_a_non_course(courses, text):
+    from unittest.mock import patch as _patch
+
+    from bb.tools import actions
+    with _patch.object(actions, "_run_cli") as run:
+        assert actions.refresh_course_content(text)["ok"] is False
+        assert actions.download_course_file(text, "slides")["ok"] is False
+    run.assert_not_called()
