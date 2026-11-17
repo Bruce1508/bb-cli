@@ -143,6 +143,7 @@ def test_no_common_prefix_code_is_still_ambiguous(tmp_path, codes, text):
 
 @pytest.mark.parametrize("text", [
     "all!", "any.", "a ll", "!!!", "*?", "null;", "xyz", "btp", "BTP200", "object", "frameworks",
+    "object!", "frame works", "web programming tools?",
 ])
 def test_resolve_course_is_idempotent(courses, text):
     """Callers resolve once and pass the code on; a second resolve must not widen it.
@@ -170,3 +171,17 @@ def test_action_tools_refuse_a_non_course(courses, text):
         assert actions.refresh_course_content(text)["ok"] is False
         assert actions.download_course_file(text, "slides")["ok"] is False
     run.assert_not_called()
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("object!", "BTP200"), ("frame works", "WEB322"), ("web programming tools?", "WEB322"),
+])
+def test_resolve_course_display_names_ignore_punctuation(courses, text, expected):
+    assert resolve_course(text) == expected
+
+
+@pytest.mark.parametrize("text", ["programming!", "web-prog"])
+def test_ambiguous_display_name_raises_on_the_first_resolve(courses, text):
+    # Not on a later re-resolve inside a tool's try/except, where it would be swallowed.
+    with pytest.raises(ValueError, match="Ambiguous"):
+        resolve_course(text)

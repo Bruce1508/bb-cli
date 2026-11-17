@@ -172,6 +172,11 @@ _NO_FILTER = {"", "all", "any", "*", "none", "null"}
 NO_MATCH = "_NONE_"
 
 
+def _name_key(s: str) -> str:
+    """Display-name match key: lowercase letters and digits only."""
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
 def _course_names() -> dict[str, str]:
     """course_code → display_name from course_map ({} if DB missing)."""
     try:
@@ -213,7 +218,10 @@ def resolve_course(text: str | None) -> str | None:
         return roots[0]
     for hits in (
         code_hits,
-        [code for code, name in _course_names().items() if query.lower() in name.lower()],
+        # Keyed on `safe`, not the raw text, so resolving the fallthrough `safe` again
+        # makes the same comparison: resolution stays idempotent ('data base?' too).
+        [code for code, name in _course_names().items()
+         if _name_key(safe) in _name_key(name)],
     ):
         if len(hits) == 1:
             return hits[0]

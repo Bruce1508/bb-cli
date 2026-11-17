@@ -391,6 +391,9 @@ class ChatEngine:
 # REPL entry point
 # ---------------------------------------------------------------------------
 
+# Any spelling of the /quiz end marker inside file text (case, spacing, extra '>').
+_END_MARKER_RE = re.compile(r"COURSE\s*FILE\s*TEXT\s*>+", re.IGNORECASE)
+
 _SLASH_HELP = (
     "  /exit, /quit   — leave chat\n"
     "  /clear         — reset conversation (also deletes saved history)\n"
@@ -541,7 +544,7 @@ def _handle_slash(cmd_line: str, engine: "ChatEngine", con: "Console") -> bool:
             "<<<COURSE FILE TEXT\n"
             # A file can't close the data block early: drop EVERY '>' after the marker
             # words (a one-pass replace of '>>>' lets '>>>>' re-form it).
-            f"{re.sub(r'COURSE FILE TEXT>+', 'COURSE FILE TEXT', result['text'])}\n"
+            f"{_END_MARKER_RE.sub('COURSE FILE TEXT', result['text'])}\n"
             "COURSE FILE TEXT>>>\n"
             "Ask ONE short question that can be answered only from that text, then stop and "
             "wait for my answer. Do NOT show or hint at the answer in the same message. "
