@@ -78,3 +78,66 @@ def test_result_is_cached_until_file_changes(tmp_path):
         assert extract_pages(f) == ["one"]
     assert pdf.call_count == 1
     assert (tmp_path / "text" / "BTP200" / "a.pdf.json").exists()
+
+
+def test_pdf_pages_are_closed_and_all_extracted(tmp_path):
+    from unittest.mock import MagicMock
+
+    pages = [MagicMock(**{"extract_text.return_value": t}) for t in ("a", None, "c")]
+    pdf = MagicMock(pages=pages)
+    f = tmp_path / "a.pdf"
+    f.write_bytes(b"%PDF")
+    with patch("bb.text_extract.pdfplumber.open") as op:
+        op.return_value.__enter__.return_value = pdf
+        assert extract_pages(f) == ["a", "", "c"]
+    assert all(p.close.called for p in pages)
+
+
+def test_pptx_total_size_over_budget_is_refused(tmp_path):
+    f = tmp_path / "deck.pptx"
+    _pptx(f, ["x" * 100] * 3)
+    with patch("bb.text_extract._MAX_TOTAL_BYTES", 200):
+        with pytest.raises(ValueError, match="too large"):
+            extract_pages(f)
+
+
+def test_txt_over_budget_is_refused(tmp_path):
+    f = tmp_path / "a.txt"
+    f.write_text("x" * 100)
+    with patch("bb.text_extract._MAX_TOTAL_BYTES", 50):
+        with pytest.raises(ValueError, match="too large"):
+            extract_pages(f)
+
+
+def test_utf16_xml_part_is_refused(tmp_path):
+    f = tmp_path / "u16.docx"
+    xml = f'<?xml version="1.0"?><w:document xmlns:w="{W}"><w:body/></w:document>'
+    with zipfile.ZipFile(f, "w") as z:
+        z.writestr("word/document.xml", xml.encode("utf-16"))
+    with pytest.raises(ValueError, match="encoding"):
+        extract_pages(f)
+
+
+def test_cache_invalidated_when_file_changes(tmp_path):
+    f = tmp_path / "files" / "BTP200" / "a.md"
+    f.parent.mkdir(parents=True)
+    f.write_text("old")
+    assert extract_pages(f) == ["old"]
+    st = f.stat()
+    f.write_text("brand new longer text")
+    import os
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns))  # same mtime, different size
+    assert extract_pages(f) == ["brand new longer text"]
+
+
+def test_non_dict_cache_is_a_miss_and_is_rewritten(tmp_path):
+    import json
+
+    f = tmp_path / "files" / "BTP200" / "a.md"
+    f.parent.mkdir(parents=True)
+    f.write_text("hello")
+    cache = tmp_path / "text" / "BTP200" / "a.md.json"
+    cache.parent.mkdir(parents=True)
+    cache.write_text("[1, 2]")
+    assert extract_pages(f) == ["hello"]
+    assert isinstance(json.loads(cache.read_text()), dict)
