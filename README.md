@@ -83,9 +83,10 @@ bb                               # what's due today
 
 Requires **Python 3.11+**. `bb setup` walks through `bb init` (LMS URL, optional iCal feed, notifications), `bb setup-browsers` (the Chromium build used for authentication and scraping), `bb auth` (login + MFA), your first `bb sync`, and optional auto-sync. You can still run any of those steps on their own.
 
-### 3. Use it
+### 2. Use it
 
 ```bash
+bb today
 bb due --days 7
 bb grades
 bb changes
@@ -100,7 +101,7 @@ bb chat "what should I work on first?"
 
 ## 🤖 Ask your courses anything
 
-`bb chat` is a streaming, tool-calling assistant backed by a local [Ollama](https://ollama.com/) model. It can inspect deadlines, grades, announcements, recent changes, cached course trees, and downloaded PDFs through the same functions exposed by MCP.
+`bb chat` is a streaming, tool-calling assistant backed by a local [Ollama](https://ollama.com/) model. It can inspect deadlines, grades, announcements, recent changes and cached course trees, and it reads and searches your downloaded PDF, DOCX, PPTX, TXT and Markdown files through the same functions exposed by MCP. It can also act for you: sync Blackboard, refresh a course's content, and download up to five files per request. Course names are matched loosely ("oop", "btp"), and when a name is ambiguous it asks you which course you meant.
 
 ```console
 $ bb chat
@@ -125,13 +126,15 @@ bb chat
 | Chat command | Action |
 |---|---|
 | `/sync` | Refresh Blackboard data without leaving chat |
+| `/quiz <course> <file>` | Quiz yourself on a course file, one question at a time, grounded in the file |
+| `/resume` | Bring back the previous session's conversation (or start with `bb chat --resume`) |
 | `/courses` | List discovered courses |
 | `/think` | Toggle deeper reasoning mode |
 | `/clear` | Clear saved conversation history |
 | `/help` | Show all chat commands |
 | `/exit` or `/quit` | Leave the REPL |
 
-You can also use single-shot mode: `bb chat "summarize the latest announcements"`.
+You can also use single-shot mode: `bb chat "summarize the latest announcements"`. Each `bb chat` starts a fresh conversation.
 
 ## 🆕 Know what changed
 
@@ -168,20 +171,22 @@ Example configuration for clients using the standard `mcpServers` format:
 ```
 
 <details>
-<summary><strong>View all 14 MCP / AI tools</strong></summary>
+<summary><strong>View all 19 MCP / AI tools</strong></summary>
 
-| Data tools | Study tools |
-|---|---|
-| `get_upcoming_deadlines` | `summarize_content` |
-| `get_grades` | `generate_study_plan` |
-| `get_announcements` | `extract_key_concepts` |
-| `get_course_list` | `estimate_study_time` |
-| `get_sync_status` |  |
-| `get_recent_changes` |  |
-| `get_course_content` |  |
-| `search_content` |  |
-| `list_downloaded_files` |  |
-| `read_file_content` |  |
+| Data tools | Study tools | Action tools |
+|---|---|---|
+| `get_briefing` | `summarize_content` | `sync_now` |
+| `get_upcoming_deadlines` | `generate_study_plan` | `refresh_course_content` |
+| `get_grades` | `extract_key_concepts` | `download_course_file` |
+| `get_announcements` | `estimate_study_time` |  |
+| `get_course_list` |  |  |
+| `get_sync_status` |  |  |
+| `get_recent_changes` |  |  |
+| `get_course_content` |  |  |
+| `search_content` |  |  |
+| `search_file_text` |  |  |
+| `list_downloaded_files` |  |  |
+| `read_file_content` |  |  |
 
 </details>
 
@@ -194,6 +199,8 @@ Example configuration for clients using the standard `mcpServers` format:
 
 | Command | What it does |
 |---|---|
+| `bb` / `bb today` | What matters today: urgent deadlines, changes, unread announcements |
+| `bb setup` | One-time guided setup: settings, browser, login, first sync, auto-sync |
 | `bb init` | Create `~/.bb/config.toml` and initialize the database |
 | `bb auth` | Log in through headed Chromium and save an encrypted session |
 | `bb sync` | Run the full multi-source sync |
@@ -249,8 +256,13 @@ ical_url = "https://your-school.blackboard.com/.../calendar.ics"
 sync_interval_hours = 4
 
 [notification]
-provider = "terminal" # terminal | ntfy
+provider = "terminal" # terminal | ntfy | telegram | discord
 ntfy_topic = ""
+telegram_token = ""
+telegram_chat_id = ""
+discord_webhook = ""
+daily_digest = true    # one morning summary per day
+digest_hour = 7        # local hour; the first sync after it sends the digest
 
 [ai]
 provider = "ollama"
@@ -258,7 +270,7 @@ model = ""             # empty = auto-detect an installed model
 think = false
 ```
 
-Desktop notifications work on macOS and Linux. [ntfy](https://ntfy.sh/) is available for cross-device push; Telegram and Discord delivery are planned.
+Desktop notifications work on macOS and Linux. [ntfy](https://ntfy.sh/), Telegram and Discord are available for cross-device push. Each sync sends a reminder 24 hours and again 6 hours before a deadline, at most once per window. Set `daily_digest = false` to turn the morning summary off.
 
 ## 🧱 Architecture
 
@@ -305,7 +317,6 @@ Tests use in-memory or temporary SQLite databases, saved Blackboard HTML fixture
 
 - 🎓 Canvas, Moodle, and Brightspace adapters through the existing LMS interface
 - ☁️ Optional hosted AI providers alongside local Ollama
-- 📣 Telegram and Discord notification routing
 - 🧪 Broader fixture coverage across different Blackboard Ultra deployments
 
 ### Current limitations
