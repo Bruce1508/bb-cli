@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 import webbrowser
@@ -92,21 +93,37 @@ def _prompt_notification_details(
     import secrets
 
     n = current.model_copy(update={"provider": provider})
+    keep_hint = "[dim](press Enter to keep the saved one)[/dim]"
     if provider == "ntfy":
         default_topic = n.ntfy_topic or f"bb-{secrets.token_hex(4)}"
-        topic = typer.prompt("ntfy topic (anyone who knows it can read it)", default=default_topic)
-        n = n.model_copy(update={"ntfy_topic": topic.strip()})
-        console.print(f"[dim]  Install the ntfy app and subscribe to: {n.ntfy_topic}[/dim]")
+        while True:
+            topic = typer.prompt(
+                "ntfy topic (anyone who knows it can read it)", default=default_topic
+            ).strip()
+            if re.fullmatch(r"[-_A-Za-z0-9]{1,64}", topic):
+                break
+            console.print("[red]Use 1-64 letters, digits, '-' or '_' only.[/red]")
+        n = n.model_copy(update={"ntfy_topic": topic})
+        console.print(f"[dim]  Install the ntfy app and subscribe to: {escape(topic)}[/dim]")
     elif provider == "telegram":
+        if n.telegram_token:
+            console.print(keep_hint)
         token = typer.prompt(
-            "Telegram bot token (from @BotFather)", default=n.telegram_token or "", hide_input=True
+            "Telegram bot token (from @BotFather)",
+            default=n.telegram_token or None,
+            hide_input=True,
+            show_default=False,
         )
-        chat_id = typer.prompt("Telegram chat id", default=n.telegram_chat_id or "")
+        chat_id = typer.prompt("Telegram chat id", default=n.telegram_chat_id or None)
         n = n.model_copy(
             update={"telegram_token": token.strip(), "telegram_chat_id": chat_id.strip()}
         )
     elif provider == "discord":
-        hook = typer.prompt("Discord webhook URL", default=n.discord_webhook or "")
+        if n.discord_webhook:
+            console.print(keep_hint)
+        hook = typer.prompt(
+            "Discord webhook URL", default=n.discord_webhook or None, show_default=False
+        )
         n = n.model_copy(update={"discord_webhook": hook.strip()})
     return n
 
@@ -130,7 +147,10 @@ def init() -> None:
     console.print("\n[bold]Notification method:[/bold]")
     for k, (_, label) in _NOTIFY_OPTIONS.items():
         console.print(f"  ({k}) {label}")
-    notify_choice = typer.prompt("Select", default=1, type=int)
+    saved_choice = next(
+        (k for k, (p, _) in _NOTIFY_OPTIONS.items() if p == existing.notification.provider), 1
+    )
+    notify_choice = typer.prompt("Select", default=saved_choice, type=int)
     notify_provider = _NOTIFY_OPTIONS.get(notify_choice, _NOTIFY_OPTIONS[1])[0]
     notification = _prompt_notification_details(existing.notification, notify_provider)
 
@@ -749,7 +769,7 @@ def ann(
             table.add_row(a.course, title_str, posted_str)
 
         console.print(table)
-        # Showing an announcement in full counts as reading it.
+        # Listing an announcement in `bb ann` counts as reading it.
         db.mark_announcements_read([a.id for a in announcements if a.read_at is None])
 
 
