@@ -257,3 +257,16 @@ def test_download_items_failure_is_reported_not_raised(tmp_path):
                             _FakeDL(fail={"Week 2.pdf"}), db)
     assert report.failed == [("Week 2.pdf", "HTTP 403")]
     assert report.saved == []
+
+
+def test_safe_filename_never_escapes_or_hides():
+    from bb.downloader import safe_filename
+    def name(title, url="https://h/f.pdf"):
+        return safe_filename(ContentItem("file", title, download_url=url))
+    assert name("Week 1/Slides") == "Week 1_Slides.pdf"
+    assert name("..\\..\\etc") == "_.._etc.pdf"
+    assert name("..", url="https://h/noext") == "file"
+    assert name("   ") == "file.pdf"
+    assert name(".hidden") == "hidden.pdf"
+    for t in ("../x", "..", "a\\b", "/abs"):
+        assert "/" not in name(t) and "\\" not in name(t) and not name(t).startswith(".")

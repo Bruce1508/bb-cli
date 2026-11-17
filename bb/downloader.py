@@ -106,7 +106,15 @@ def collect_downloadable(items: list[ContentItem]) -> list[ContentItem]:
 
 
 def safe_filename(item: ContentItem) -> str:
-    return item.title.replace("/", "_") + ext_from_url(item.download_url)
+    """Filename for a downloaded item: never a path, never hidden, never empty.
+
+    Titles come from Blackboard (untrusted), so path separators are replaced and a
+    title made only of dots/spaces (e.g. "..") becomes "file".
+    """
+    stem = item.title.replace("/", "_").replace("\\", "_").strip()
+    if not stem.strip(". "):
+        stem = "file"
+    return stem.lstrip(".") + ext_from_url(item.download_url)
 
 
 @dataclass
