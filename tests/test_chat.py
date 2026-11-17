@@ -963,20 +963,48 @@ def test_slash_sync_uses_sync_now():
     assert "3 deadlines" in con.file.getvalue()
 
 
-def test_slash_quiz_builds_grounded_prompt():
+def _quiz(line, read_result):
     import io
-    from unittest.mock import MagicMock
+    from unittest.mock import MagicMock, patch
 
     from rich.console import Console
 
     from bb.ai.chat import _handle_slash
     engine = MagicMock()
     engine.process_turn.return_value = ""
-    _handle_slash("/quiz oop week 5 slides", engine, Console(file=io.StringIO()))
+    con = Console(file=io.StringIO(), width=200)
+    kw = {"side_effect": read_result} if isinstance(read_result, Exception) else {
+        "return_value": read_result}
+    with patch("bb.tools.queries.read_file_content", **kw) as read:
+        _handle_slash(line, engine, con)
+    return engine, con, read
+
+
+def test_slash_quiz_embeds_the_file_text_in_the_prompt():
+    engine, _, read = _quiz("/quiz oop week 5 slides", {
+        "filename": "Week 5 Slides.pdf", "course": "OOP244",
+        "text": "Hello bb-cli test!", "pages": 1, "char_count": 18,
+        "offset": 0, "truncated": False,
+    })
+    read.assert_called_once_with("oop", "week 5 slides")
     prompt = engine.process_turn.call_args.args[0]
-    assert "oop" in prompt and "week 5 slides" in prompt
-    assert "read_file_content" in prompt
+    assert "Hello bb-cli test!" in prompt
+    assert "Week 5 Slides.pdf" in prompt
     assert "ONE" in prompt
+    assert "not instructions" in prompt
+    assert "read_file_content" not in prompt  # the model is not asked to fetch anything
+
+
+def test_slash_quiz_file_error_makes_no_model_call():
+    engine, con, _ = _quiz("/quiz oop syllabus", {"error": "file not found"})
+    engine.process_turn.assert_not_called()
+    assert "bb download oop" in con.file.getvalue()
+
+
+def test_slash_quiz_ambiguous_course_makes_no_model_call():
+    engine, con, _ = _quiz("/quiz web notes", ValueError("Ambiguous course 'web'"))
+    engine.process_turn.assert_not_called()
+    assert "Ambiguous course" in con.file.getvalue()
 
 
 def test_slash_quiz_usage_when_args_missing():
