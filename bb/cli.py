@@ -27,6 +27,13 @@ app = typer.Typer(help="bb — Blackboard LMS terminal client")
 console = Console()
 
 
+@app.callback(invoke_without_command=True)
+def _main(ctx: typer.Context) -> None:
+    """bb — Blackboard in your terminal. Run `bb` alone to see what matters today."""
+    if ctx.invoked_subcommand is None:
+        today()
+
+
 def _warn_if_session_stale() -> None:
     """Print a one-line warning if session is expired or uncertain."""
     from bb.security.session import SessionManager
@@ -246,6 +253,45 @@ def import_ical(
         cfg2 = load_config()
         dispatch_notify(cfg2.notification, "bb", label)
         console.print(f"[blue]🔔[/blue] {label}")
+
+
+@app.command()
+def today() -> None:
+    """Show what matters today: urgent deadlines, changes, unread announcements."""
+    from bb.tools.queries import get_briefing
+
+    _warn_if_session_stale()
+    _render_briefing(get_briefing())
+
+
+def _render_briefing(b: dict) -> None:
+    if b.get("last_sync"):
+        sync_note = f"last sync {b['last_sync'][:16].replace('T', ' ')} UTC"
+    else:
+        sync_note = "never synced — run bb sync"
+    console.print(f"[bold]📅 Today[/bold]  [dim]({sync_note})[/dim]")
+
+    urgent = b["urgent_deadlines"]
+    if urgent:
+        for d in urgent:
+            console.print(
+                f"  🔴 [cyan]{escape(d['course'])}[/cyan] {escape(d['title'])}"
+                f" — [bold]{d['when']}[/bold]"
+            )
+    else:
+        console.print("  [green]Nothing due in the next 48h.[/green]")
+    if b["later_this_week"]:
+        console.print(f"  [dim]+{b['later_this_week']} more this week → bb due[/dim]")
+
+    for c in b["recent_changes"][:5]:
+        console.print(
+            f"  ⟳ [cyan]{escape(c['course'])}[/cyan] {escape(c['title'])}:"
+            f" {c['change_type'].replace('_', ' ')}"
+        )
+    for a in b["unread_announcements"]:
+        console.print(f"  📢 [cyan]{escape(a['course'])}[/cyan] {escape(a['title'])}")
+    if b["unread_announcements"]:
+        console.print("  [dim]→ bb ann to read them[/dim]")
 
 
 @app.command()
