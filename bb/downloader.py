@@ -122,11 +122,12 @@ def safe_filename(item: ContentItem, unique: bool = False) -> str:
     """Filename for a downloaded item: never a path, never hidden, never empty.
 
     Titles come from Blackboard (untrusted), so path separators are replaced, control
-    characters (NUL etc.) dropped, the stem capped at 150 chars, and a title made only of
+    characters (NUL etc.) dropped, the stem capped at 150 UTF-8 bytes, and a title made only of
     dots/spaces (e.g. "..") becomes "file". unique=True appends a hash of the download url
     ("Slides-1a2b3c.pdf") so same-titled items never share a file.
     """
     stem = _CONTROL.sub("", item.title).replace("/", "_").replace("\\", "_").strip()
+    stem = stem.encode("utf-8")[:_STEM_MAX].decode("utf-8", errors="ignore")  # bytes: NAME_MAX
     if not stem.strip(". "):
         stem = "file"
     stem = stem.lstrip(".")[:_STEM_MAX]

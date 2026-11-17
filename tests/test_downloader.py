@@ -405,3 +405,10 @@ def test_legacy_download_is_not_adopted_when_batch_names_collide(tmp_path):
     assert all(p.name != "Notes.pdf" for p in report.saved)
     assert db.download_url_for_file("BTP200", "Notes.pdf") is None
 
+
+def test_safe_filename_caps_stem_by_utf8_bytes():
+    from bb.downloader import safe_filename
+    name = safe_filename(ContentItem("file", "é" * 200, download_url="https://h/f.pdf"))
+    stem = name[: -len(".pdf")]
+    assert len(stem.encode("utf-8")) <= 150
+    assert stem == "é" * 75
