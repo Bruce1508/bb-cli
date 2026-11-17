@@ -23,6 +23,13 @@ if TYPE_CHECKING:
 
 _TYPE_MAP: dict = {int: "integer", str: "string", bool: "boolean", float: "number"}
 MAX_TOOL_ROUNDS = 5
+NO_PROVIDER_HELP = (
+    "No AI provider found. bb chat needs a local Ollama model (free, runs offline).\n\n"
+    "  1. Install Ollama:  https://ollama.com\n"
+    "  2. Pull a model:    ollama pull qwen3:8b    (~5 GB; use qwen2.5:3b on small laptops)\n"
+    "  3. Start it:        ollama serve\n\n"
+    "Then run bb chat again. Hosted providers (Claude/OpenAI) are not supported yet."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -237,15 +244,7 @@ class ChatEngine:
         """Process one user turn and return the assistant response text."""
         if self.provider == "ollama":
             return self._ollama_turn(user_input, console)
-        return (
-            "No AI provider found. bb chat needs a local Ollama model to work.\n\n"
-            "Set up Ollama (free, runs fully offline):\n"
-            "  1. Install: https://ollama.com\n"
-            "  2. Pull a model: ollama pull qwen3:8b  (~5 GB)\n"
-            "  3. Run: ollama serve\n\n"
-            "Then restart bb chat.\n"
-            "(Hosted providers like Claude/OpenAI are planned but not yet supported.)"
-        )
+        return NO_PROVIDER_HELP
 
     def _stream_answer(self, con: "Console", _ollama: object, think: bool) -> str:  # noqa: F821
         """Stream the final answer token-by-token, rendering live to the console.
@@ -396,19 +395,7 @@ def run_chat(
     engine = ChatEngine(cfg)
 
     if engine.provider == "none":
-        con.print("[yellow]⚠ No AI provider found. bb chat needs an LLM to work.[/yellow]")
-        con.print("")
-        con.print("[bold]Option 1 — Claude API (easiest, free tier available):[/bold]")
-        con.print("  1. Get a free API key at [link]https://console.anthropic.com[/link]")
-        con.print("  2. Add to ~/.bb/config.toml:")
-        con.print('       [ai]\n       provider = "claude"\n       api_key = "sk-ant-..."')
-        con.print("")
-        con.print("[bold]Option 2 — Ollama (free, runs fully offline):[/bold]")
-        con.print("  1. Install: [link]https://ollama.com[/link]")
-        con.print("  2. Pull a model: [bold]ollama pull qwen2.5:7b[/bold]  (~4.7 GB)")
-        con.print("  3. Run: [bold]ollama serve[/bold]")
-        con.print("")
-        con.print("Then restart bb chat.")
+        con.print(NO_PROVIDER_HELP, markup=False, highlight=False)
         return
 
     if query:

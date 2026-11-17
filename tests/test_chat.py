@@ -774,3 +774,22 @@ def test_history_trimmed_to_50_messages(monkeypatch, tmp_path):
     assert saved[0]["content"] != "q0"
     # Newest pair should be last
     assert saved[-1] == {"role": "assistant", "content": "new answer"}
+
+
+def test_no_provider_help_never_suggests_unsupported_provider(monkeypatch, tmp_path):
+    """Following the help text must not produce a config that load_config() rejects."""
+    import io
+
+    from rich.console import Console
+
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.ai.providers.ollama.is_available", lambda: False)
+    from bb.ai.chat import run_chat
+    from bb.config import BBConfig
+
+    buf = io.StringIO()
+    run_chat(query="hi", cfg=BBConfig(), console=Console(file=buf, width=200))
+    out = buf.getvalue()
+    assert "ollama pull" in out
+    assert 'provider = "claude"' not in out
+    assert "api_key" not in out
