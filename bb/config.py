@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal
 
 import tomli_w
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 BB_DIR = Path.home() / ".bb"
 
@@ -16,6 +16,8 @@ class NotificationConfig(BaseModel):
     telegram_token: str = ""  # plaintext — moves to keyring Day 4
     telegram_chat_id: str = ""
     discord_webhook: str = ""  # plaintext — moves to keyring Day 4
+    daily_digest: bool = True
+    digest_hour: int = Field(default=7, ge=0, le=23)  # local time; first sync after it sends
 
 
 class AIConfig(BaseModel):

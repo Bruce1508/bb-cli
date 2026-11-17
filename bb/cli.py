@@ -470,14 +470,18 @@ def status() -> None:
 
 def _run_proactive(cfg: BBConfig, db_path: Path) -> None:
     """Send due-soon reminders (deduped). Never fails the sync."""
+    from bb.briefing import send_daily_digest
     from bb.reminders import send_reminders
 
     try:
         with Database(db_path) as db:
             db.setup()
             n = send_reminders(db, cfg.notification)
+            digest_sent = send_daily_digest(db, cfg.notification)
         if n:
             console.print(f"[blue]⏰[/blue] {n} deadline reminder{'s' if n != 1 else ''} sent")
+        if digest_sent:
+            console.print("[blue]🔔[/blue] Daily digest sent")
     except Exception as exc:
         console.print(f"[yellow]⚠[/yellow] Reminders failed: {exc}")
 
