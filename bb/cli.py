@@ -6,6 +6,7 @@ import subprocess
 import time
 import webbrowser
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -421,7 +422,7 @@ def status() -> None:
             )
 
 
-def _run_proactive(cfg: BBConfig, db_path) -> None:
+def _run_proactive(cfg: BBConfig, db_path: Path) -> None:
     """Send due-soon reminders (deduped). Never fails the sync."""
     from bb.reminders import send_reminders
 
@@ -488,6 +489,7 @@ def sync(
                     priority="high",
                 )
                 db.log_notification("session_expired_probe")
+            _run_proactive(cfg, db_path)  # reminders must not depend on a live session
             raise typer.Exit(code=1)
     elif refresh_only:
         console.print("[dim]--refresh-only has no effect with --ical-only or --dry-run[/dim]")

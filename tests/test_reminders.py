@@ -74,3 +74,39 @@ def test_sync_ical_only_sends_reminders(tmp_path):
     assert result.exit_code == 0, result.output
     m.assert_called_once()
     assert "reminder" in result.output
+
+
+def test_sync_dead_session_still_reminds(tmp_path):
+    from typer.testing import CliRunner
+
+    from bb.cli import app
+    from bb.security.session import SessionError
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    db.upsert_deadline(Deadline("d1", "BTP200", "Lab 4",
+                                datetime.now(timezone.utc) + timedelta(hours=3), "ical"))
+    db.close()
+    with (
+        patch("bb.config.BB_DIR", tmp_path),
+        patch("bb.reminders.dispatch_notify") as m,
+        patch("bb.notify.terminal.notify"),
+        patch("bb.cli.dispatch_notify"),  # session-expired notice
+        patch("bb.sync.preflight_session", side_effect=SessionError("dead")),
+    ):
+        result = CliRunner().invoke(app, ["sync"])
+    assert result.exit_code == 1, result.output
+    m.assert_called_once()
+
+
+def test_reminder_failure_does_not_fail_sync(tmp_path):
+    from typer.testing import CliRunner
+
+    from bb.cli import app
+    with (
+        patch("bb.config.BB_DIR", tmp_path),
+        patch("bb.notify.terminal.notify"),
+        patch("bb.reminders.send_reminders", side_effect=RuntimeError("boom")),
+    ):
+        result = CliRunner().invoke(app, ["sync", "--ical-only"])
+    assert result.exit_code == 0, result.output
+    assert "Reminders failed" in result.output
