@@ -87,6 +87,7 @@ def download_course_file(course: str, name: str) -> dict:
     from bb.downloader import (
         Downloader,
         already_downloaded,
+        ambiguous_filenames,
         collect_downloadable,
         download_items,
     )
@@ -124,6 +125,7 @@ def download_course_file(course: str, name: str) -> dict:
         report = download_items(
             todo[:_MAX_FILES_PER_CALL], code, bb_dir / "files" / code,
             Downloader(SessionManager(bb_dir / "session.enc")), db,
+            ambiguous_names=ambiguous_filenames(tree.items),
         )
     return {
         "ok": not report.failed,

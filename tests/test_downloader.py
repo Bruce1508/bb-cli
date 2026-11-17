@@ -11,7 +11,7 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 
-from bb.downloader import DownloadError, Downloader
+from bb.downloader import DownloadError, Downloader, ambiguous_filenames
 from bb.security.session import SessionError
 
 
@@ -389,11 +389,39 @@ def _legacy_notes(tmp_path):
 def test_legacy_download_is_adopted_not_duplicated(tmp_path):
     db, dest = _legacy_notes(tmp_path)
     url = "https://h/a/notes.pdf"
-    report = download_items([ContentItem("file", "Notes", download_url=url)],
-                            "BTP200", dest, _FakeDL(), db)
+    item = ContentItem("file", "Notes", download_url=url)
+    report = download_items([item], "BTP200", dest, _FakeDL(), db,
+                            ambiguous_names=ambiguous_filenames([item]))
     assert report.saved == [] and report.skipped == ["Notes.pdf"]
     assert [p.name for p in dest.iterdir()] == ["Notes.pdf"]
     assert db.download_url_for_file("BTP200", "Notes.pdf") == url
+
+
+def test_legacy_download_is_not_adopted_without_ambiguous_names(tmp_path):
+    db, dest = _legacy_notes(tmp_path)
+    item = ContentItem("file", "Notes", download_url="https://h/a/notes.pdf")
+    report = download_items([item], "BTP200", dest, _FakeDL(), db)
+    assert report.skipped == [] and len(report.saved) == 1
+    assert db.download_url_for_file("BTP200", "Notes.pdf") is None
+
+
+def test_legacy_not_adopted_by_narrowed_batch_when_name_ambiguous_in_tree(tmp_path):
+    db, dest = _legacy_notes(tmp_path)  # legacy "Notes.pdf" (really week 4's)
+    w4 = ContentItem("file", "Notes", download_url="https://h/w4/n.pdf")
+    w5 = ContentItem("file", "Notes", download_url="https://h/w5/n.pdf")
+    report = download_items([w5], "BTP200", dest, _FakeDL(), db,
+                            ambiguous_names=ambiguous_filenames([w4, w5]))
+    assert report.skipped == [] and len(report.saved) == 1
+    assert report.saved[0].name != "Notes.pdf"
+    assert db.download_url_for_file("BTP200", "Notes.pdf") is None
+
+
+def test_ambiguous_filenames_returns_only_duplicates():
+    a = ContentItem("file", "Notes", download_url="https://h/1/a.pdf")
+    b = ContentItem("file", "Notes", download_url="https://h/2/b.pdf")
+    c = ContentItem("file", "Other", download_url="https://h/3/c.pdf")
+    folder = ContentItem("folder", "F", children=[b, c])
+    assert ambiguous_filenames([a, folder]) == {"Notes.pdf"}
 
 
 def test_legacy_download_is_not_adopted_when_batch_names_collide(tmp_path):

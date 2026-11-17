@@ -20,7 +20,13 @@ import bb.config as _config_module
 from bb.auto_setup import install_auto_sync, uninstall_auto_sync
 from bb.config import BBConfig, NotificationConfig, load_config, save_config
 from bb.db import Database
-from bb.downloader import Downloader, collect_downloadable, download_items, ext_from_url
+from bb.downloader import (
+    Downloader,
+    ambiguous_filenames,
+    collect_downloadable,
+    download_items,
+    ext_from_url,
+)
 from bb.notify import dispatch_notify
 from bb.parsers.ical import ICalParseError, parse_ical
 
@@ -1195,7 +1201,10 @@ def download(
 
     with Database(BB_DIR / "bb.db") as db:
         db.setup()
-        report = download_items(candidates, course_code, dest_dir, downloader, db, on_event=_show)
+        report = download_items(
+            candidates, course_code, dest_dir, downloader, db, on_event=_show,
+            ambiguous_names=ambiguous_filenames(tree.items),
+        )
 
     console.print(
         f"[green]✔[/green] {len(report.saved)} downloaded, {len(report.skipped)} skipped, "

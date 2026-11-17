@@ -118,6 +118,12 @@ def collect_downloadable(items: list[ContentItem]) -> list[ContentItem]:
     return result
 
 
+def ambiguous_filenames(items: list[ContentItem]) -> set[str]:
+    """Plain filenames that more than one downloadable item in `items` maps to."""
+    counts = Counter(safe_filename(i) for i in collect_downloadable(items))
+    return {name for name, n in counts.items() if n > 1}
+
+
 def safe_filename(item: ContentItem, unique: bool = False) -> str:
     """Filename for a downloaded item: never a path, never hidden, never empty.
 
@@ -173,12 +179,17 @@ def download_items(
     downloader: Downloader,
     db: Database,
     on_event: Callable[[str, str, str], None] | None = None,
+    *,
+    ambiguous_names: set[str] | None = None,
 ) -> DownloadReport:
     """Download each item unless this url was already downloaded; record successes in the DB.
 
     Same-titled items (e.g. "Lecture Slides" in every week) get a url-hash suffix so they
     never overwrite or stand in for each other. Failures are collected in the report, never
     raised, so one bad file can't stop the rest.
+
+    `ambiguous_names` (see `ambiguous_filenames`, computed over the WHOLE course tree) gates
+    adoption of pre-migration plain-named files; None means never adopt.
     """
     report = DownloadReport()
     emit = on_event or (lambda *_: None)
@@ -188,9 +199,14 @@ def download_items(
         filename = safe_filename(item)
         try:
             had = already_downloaded(db, course_code, url)
-            if not had and name_counts[filename] == 1:
+            if (
+                not had
+                and name_counts[filename] == 1
+                and ambiguous_names is not None
+                and filename not in ambiguous_names
+            ):
                 # Pre-migration-7 rows have no url: adopt the plain-named file (safe only
-                # because no other item in this batch could own it).
+                # because no other item in the whole course tree could own it).
                 had = _adopt_legacy(db, course_code, filename, url, dest_dir)
             if had:
                 report.skipped.append(had)
