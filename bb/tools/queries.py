@@ -103,16 +103,23 @@ def get_grades(course: str | None = None) -> list[dict]:
     ]
 
 
-def get_announcements(course: str | None = None, unread: bool = False) -> list[dict]:
-    """Return recent announcements from the local database.
+_ANN_BODY_MAX = 1500  # chars per announcement sent to the LLM
+
+
+def get_announcements(
+    course: str | None = None, unread: bool = False, limit: int = 15
+) -> list[dict]:
+    """Return recent announcements, including what they actually say (body).
 
     Use this tool when the student asks about announcements, course updates,
-    news, or 'what's new in my courses' / 'any announcements'.
+    news, 'what's new in my courses', or what a professor said about something
+    (exam dates, room changes, cancelled classes) — read the body to answer.
 
     Args:
         course: Specific course code to filter by (e.g. 'BTI325'). Omit or pass
             None to get announcements for ALL courses. Do NOT pass 'all' — pass None.
-        unread: If True, return only announcements not yet read.
+        unread: If True, return only announcements the student has not opened yet.
+        limit: Maximum number of announcements (default 15).
     """
     BB_DIR = _config_module.BB_DIR
     # Normalize LLM-generated sentinel values that mean "no filter"
@@ -121,19 +128,17 @@ def get_announcements(course: str | None = None, unread: bool = False) -> list[d
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
-            announcements = db.get_recent_announcements(limit=15)
+            announcements = db.get_recent_announcements(
+                limit=limit, unread_only=unread, course=course
+            )
     except Exception:
         return []
-
-    if course:
-        announcements = [a for a in announcements if a.course.upper() == course.upper()]
-    if unread:
-        announcements = [a for a in announcements if a.read_at is None]
 
     return [
         {
             "course": a.course,
             "title": a.title,
+            "body": a.body[:_ANN_BODY_MAX],
             "posted_at": a.posted_at.isoformat(),
             "read": a.read_at is not None,
         }

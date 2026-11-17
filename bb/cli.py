@@ -10,6 +10,7 @@ from typing import Optional
 import httpx
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 import bb.config as _config_module
@@ -692,36 +693,38 @@ def ann(
     BB_DIR = _config_module.BB_DIR
     with Database(BB_DIR / "bb.db") as db:
         db.setup()
-        announcements = db.get_recent_announcements(limit=limit)
+        announcements = db.get_recent_announcements(limit=limit, unread_only=unread)
 
-    if unread:
-        announcements = [a for a in announcements if a.read_at is None]
+        if not announcements:
+            msg = "No unread announcements." if unread else "No announcements found."
+            console.print(msg)
+            return
 
-    if not announcements:
-        msg = "No unread announcements." if unread else "No announcements found."
-        console.print(msg)
-        return
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Course", style="cyan", min_width=8)
+        table.add_column("Announcement", min_width=30)
+        table.add_column("Posted", min_width=10)
 
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("Course", style="cyan", min_width=8)
-    table.add_column("Announcement", min_width=30)
-    table.add_column("Posted", min_width=10)
+        now = datetime.now(timezone.utc)
+        for a in announcements:
+            delta = now - a.posted_at
+            if delta.total_seconds() < 3600:
+                posted_str = f"{int(delta.total_seconds() / 60)}m ago"
+            elif delta.total_seconds() < 86400:
+                posted_str = f"{int(delta.total_seconds() / 3600)}h ago"
+            else:
+                posted_str = f"{delta.days}d ago"
 
-    now = datetime.now(timezone.utc)
-    for a in announcements:
-        delta = now - a.posted_at
-        if delta.total_seconds() < 3600:
-            posted_str = f"{int(delta.total_seconds() / 60)}m ago"
-        elif delta.total_seconds() < 86400:
-            posted_str = f"{int(delta.total_seconds() / 3600)}h ago"
-        else:
-            posted_str = f"{delta.days}d ago"
+            title = escape(a.title)
+            title_str = f"[bold]{title}[/bold]" if a.read_at is None else title
+            if a.body:
+                preview = escape(a.body[:120] + ("…" if len(a.body) > 120 else ""))
+                title_str += f"\n[dim]{preview}[/dim]"
+            table.add_row(a.course, title_str, posted_str)
 
-        # Unread announcements shown in bold
-        title_str = f"[bold]{a.title}[/bold]" if a.read_at is None else a.title
-        table.add_row(a.course, title_str, posted_str)
-
-    console.print(table)
+        console.print(table)
+        # Showing an announcement in full counts as reading it.
+        db.mark_announcements_read([a.id for a in announcements if a.read_at is None])
 
 
 @app.command()
