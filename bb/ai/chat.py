@@ -136,6 +136,9 @@ _TOOL_LABELS: dict[str, str] = {
     "extract_key_concepts": "Collecting course materials",
     "estimate_study_time": "Analyzing grades and deadlines",
     "get_recent_changes": "Checking what changed",
+    "sync_now": "Syncing Blackboard",
+    "refresh_course_content": "Fetching course content",
+    "download_course_file": "Downloading file",
 }
 
 

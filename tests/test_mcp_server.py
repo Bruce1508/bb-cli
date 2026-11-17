@@ -41,10 +41,10 @@ def test_run_is_callable():
 # ---------------------------------------------------------------------------
 
 def test_all_registry_tools_are_registered():
-    """All 15 tools from TOOL_REGISTRY must be registered on the FastMCP instance."""
+    """All 18 tools from TOOL_REGISTRY must be registered on the FastMCP instance."""
     import bb.mcp.server as srv
     from bb.tools import TOOL_REGISTRY
-    assert len(TOOL_REGISTRY) == 15, f"Expected 15 tools, got {len(TOOL_REGISTRY)}"
+    assert len(TOOL_REGISTRY) == 18, f"Expected 18 tools, got {len(TOOL_REGISTRY)}"
     for name in TOOL_REGISTRY:
         tool = srv.mcp._tool_manager.get_tool(name)
         assert tool is not None, f"Tool '{name}' is missing from MCP server"
