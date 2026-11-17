@@ -340,7 +340,7 @@ Please include a sanitized HTML fixture when fixing institution-specific selecto
 
 ## 📄 License
 
-Distributed under the [MIT License](LICENSE).
+Distributed under the [MIT License](https://github.com/Bruce1508/bb-cli/blob/main/LICENSE).
 
 ---
 
