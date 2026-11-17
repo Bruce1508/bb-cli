@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/blackboard-cli?style=for-the-badge&logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/blackboard-cli/)
 [![CI](https://img.shields.io/github/actions/workflow/status/Bruce1508/bb-cli/ci.yml?branch=main&style=for-the-badge&logo=githubactions&logoColor=white&label=CI)](https://github.com/Bruce1508/bb-cli/actions/workflows/ci.yml)
 [![Downloads](https://img.shields.io/pypi/dm/blackboard-cli?style=for-the-badge&logo=icloud&logoColor=white&color=8A2BE2)](https://pypi.org/project/blackboard-cli/)
-[![License](https://img.shields.io/github/license/Bruce1508/bb-cli?style=for-the-badge&color=2EA44F)](LICENSE)
+[![License](https://img.shields.io/github/license/Bruce1508/bb-cli?style=for-the-badge&color=2EA44F)](https://github.com/Bruce1508/bb-cli/blob/main/LICENSE)
 [![Stars](https://img.shields.io/github/stars/Bruce1508/bb-cli?style=for-the-badge&logo=github&color=181717)](https://github.com/Bruce1508/bb-cli/stargazers)
 
 [✨ Features](#features) · [⚡ Quick start](#quick-start) · [🤖 AI chat](#ai-chat) · [🧰 Commands](#commands) · [🧩 MCP](#mcp) · [🛠️ Development](#development)
@@ -18,7 +18,7 @@
 </div>
 
 <p align="center">
-  <img src=".github/assets/README-hero.png" alt="Blackboard data flowing through bb-cli into a private local database" width="100%" />
+  <img src="https://raw.githubusercontent.com/Bruce1508/bb-cli/main/.github/assets/README-hero.png" alt="Blackboard data flowing through bb-cli into a private local database" width="100%" />
 </p>
 
 > [!IMPORTANT]
@@ -44,7 +44,7 @@ Blackboard is where the data lives. Your terminal is where you work. `bb-cli` co
 </table>
 
 <p align="center">
-  <img src=".github/assets/terminal-preview.svg" alt="Illustrative bb-cli sync, deadlines, and AI chat output" width="100%" />
+  <img src="https://raw.githubusercontent.com/Bruce1508/bb-cli/main/.github/assets/terminal-preview.svg" alt="Illustrative bb-cli sync, deadlines, and AI chat output" width="100%" />
 </p>
 
 ## 🔄 How it works
