@@ -187,6 +187,8 @@ def resolve_course(text: str | None) -> str | None:
 
     None / 'all' / 'any' / '*' / 'none' / '' mean "no filter" → None.
     Unique match on code substring, then on display name → that code.
+    Several code matches where exactly one prefixes all the others (a lecture
+    and its lab sections: BTP200NAA, BTP200NAAL) → that one.
     Several matches → ValueError naming them, so the caller can ask which one.
     No match → text.upper() stripped to [A-Z0-9_-] (never a path), so filters
     return nothing rather than everything.
@@ -201,8 +203,13 @@ def resolve_course(text: str | None) -> str | None:
     codes = get_course_list()
     if safe in codes:
         return safe
+    code_hits = [c for c in codes if safe in c.upper()]
+    # A lecture code that prefixes all its lab sections wins: BTP200NAA over BTP200NAAL.
+    roots = [h for h in code_hits if all(o.upper().startswith(h.upper()) for o in code_hits)]
+    if len(code_hits) > 1 and len(roots) == 1:
+        return roots[0]
     for hits in (
-        [c for c in codes if safe in c.upper()],
+        code_hits,
         [code for code, name in _course_names().items() if query.lower() in name.lower()],
     ):
         if len(hits) == 1:
@@ -338,9 +345,31 @@ def list_downloaded_files(course: str | None = None) -> list[dict]:
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
-            return db.get_downloads(course=course)
+            rows = db.get_downloads()
     except Exception:
         return []
+    if course is None:
+        return rows
+    codes = _download_codes(course, {r["course"] for r in rows})
+    return [r for r in rows if r["course"].upper() in codes]
+
+
+def _download_codes(course: str, stored: set[str]) -> set[str]:
+    """Download course codes that belong to resolved `course`.
+
+    That is `course` itself plus legacy short codes recorded before the resolver
+    existed (stored 'BTP200' for 'BTP200NAA'): a stored code that is a prefix of
+    `course`, is not a current course itself, and is path-safe. Only codes that
+    really are in the downloads table are added, never raw user text.
+    """
+    target = course.upper()
+    known = {c.upper() for c in get_course_list()}
+    legacy = {
+        c.upper() for c in stored
+        if c and re.fullmatch(r"[A-Z0-9_-]+", c.upper())
+        and target.startswith(c.upper()) and c.upper() not in known
+    }
+    return {target} | legacy
 
 
 def read_file_content(course: str, filename: str, offset: int = 0) -> dict:
@@ -363,13 +392,17 @@ def read_file_content(course: str, filename: str, offset: int = 0) -> dict:
         {"error": "unsupported file type: <ext>"} if not PDF/DOCX/PPTX/TXT/MD
         {"error": "unreadable: <reason>"} if extraction fails
     """
-    course = resolve_course(course) or course.upper()
-    BB_DIR = _config_module.BB_DIR
-    files_dir = BB_DIR / "files" / course.upper()
-    if not files_dir.exists():
-        return {"error": "file not found"}
+    course = resolve_course(course) or "NONE"
+    files_root = _config_module.BB_DIR / "files"
+    # Rows list_downloaded_files returns are already limited to path-safe codes.
+    codes = {course.upper()} | {f["course"].upper() for f in list_downloaded_files(course)}
+    dirs = [files_root / c for c in sorted(codes)]
     match = next(
-        (f for f in files_dir.iterdir() if f.is_file() and filename.lower() in f.name.lower()),
+        (
+            f for d in dirs if d.is_dir() for f in sorted(d.iterdir())
+            if f.is_file() and filename.lower() in f.name.lower()
+            and f.resolve().is_relative_to(files_root.resolve())
+        ),
         None,
     )
     if match is None:

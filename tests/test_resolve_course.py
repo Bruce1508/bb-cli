@@ -111,3 +111,31 @@ def test_resolve_course_ambiguity_uses_sanitized_text(courses):
     with pytest.raises(ValueError, match="WEB322"):
         resolve_course("web?")
     assert resolve_course("btp!") == "BTP200"
+
+
+def _seed_codes(tmp_path, codes):
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    for i, c in enumerate(codes):
+        db.upsert_course_map(c, f"_{i}")
+    db.close()
+
+
+@pytest.mark.parametrize("codes,text,expected", [
+    (["BTP200NAA", "BTP200NAAL"], "btp200", "BTP200NAA"),  # lecture prefixes its lab
+    (["ABC100", "ABC100L", "ABC100X"], "abc", "ABC100"),
+])
+def test_code_that_prefixes_every_other_hit_wins(tmp_path, codes, text, expected):
+    _seed_codes(tmp_path, codes)
+    with patch("bb.config.BB_DIR", tmp_path):
+        assert resolve_course(text) == expected
+
+
+@pytest.mark.parametrize("codes,text", [
+    (["BTI425NAA", "BTP200NAA"], "BT"),
+    (["ABC100L", "ABC100X"], "abc"),
+])
+def test_no_common_prefix_code_is_still_ambiguous(tmp_path, codes, text):
+    _seed_codes(tmp_path, codes)
+    with patch("bb.config.BB_DIR", tmp_path), pytest.raises(ValueError, match="Ambiguous"):
+        resolve_course(text)
