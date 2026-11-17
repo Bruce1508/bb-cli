@@ -61,13 +61,13 @@ def _make_mock_client(content: bytes = b"data", status: int = 200) -> MagicMock:
 def test_extract_cookies_returns_name_value_dict():
     sm = _make_sm([{"name": "auth", "value": "tok"}, {"name": "session", "value": "abc"}])
     d = Downloader(sm)
-    assert d._extract_cookies() == {"auth": "tok", "session": "abc"}
+    assert dict(d._extract_cookies()) == {"auth": "tok", "session": "abc"}
 
 
 def test_extract_cookies_empty_when_no_cookies():
     sm = _make_sm([])
     d = Downloader(sm)
-    assert d._extract_cookies() == {}
+    assert dict(d._extract_cookies()) == {}
 
 
 def test_extract_cookies_propagates_session_error():
@@ -351,3 +351,24 @@ def test_safe_filename_unique_hashes_before_the_extension():
     item = ContentItem("file", "Week 1. Intro", download_url="https://h/w1/s.pdf")
     name = safe_filename(item, unique=True)
     assert name.startswith("Week 1. Intro-") and name.endswith(".pdf") and len(name) == 24
+
+
+def test_session_cookies_are_not_sent_to_a_redirect_host(tmp_path):
+    """A redirect to a CDN must not carry the Blackboard session cookie."""
+    seen: dict[str, str | None] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.url.host] = request.headers.get("cookie")
+        if request.url.host == "learn.example.edu":
+            return httpx.Response(302, headers={"location": "https://cdn.other.com/f.pdf"})
+        return httpx.Response(200, content=b"pdf")
+
+    sm = _make_sm([{"name": "s_session_id", "value": "secret",
+                    "domain": "learn.example.edu", "path": "/"}])
+    real_client = httpx.Client
+    with patch("bb.downloader.httpx.Client",
+               lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw)):
+        Downloader(sm).download("https://learn.example.edu/bbcswebdav/f.pdf", tmp_path, "f.pdf")
+    assert seen["learn.example.edu"] == "s_session_id=secret"
+    assert seen["cdn.other.com"] is None
+    assert (tmp_path / "f.pdf").read_bytes() == b"pdf"

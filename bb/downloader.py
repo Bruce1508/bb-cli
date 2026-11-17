@@ -36,13 +36,18 @@ class Downloader:
     def __init__(self, session_manager: SessionManager) -> None:
         self._sm = session_manager
 
-    def _extract_cookies(self) -> dict[str, str]:
-        """Decrypt session → return {name: value} cookie dict for httpx.
+    def _extract_cookies(self) -> httpx.Cookies:
+        """Decrypt session → cookie jar scoped to each cookie's own domain and path.
 
+        Scoping matters because downloads follow redirects: a plain dict would send the
+        Blackboard session to whatever host (e.g. a CDN) the redirect points at.
         Raises: SessionError if session file missing or corrupt.
         """
         state = self._sm.decrypt_session()  # raises SessionError on failure
-        return {c["name"]: c["value"] for c in state.get("cookies", [])}
+        jar = httpx.Cookies()
+        for c in state.get("cookies", []):
+            jar.set(c["name"], c["value"], domain=c.get("domain", ""), path=c.get("path", "/"))
+        return jar
 
     def download(self, url: str, dest_dir: Path, filename: str) -> Path:
         """Stream url to dest_dir/<filename> using session cookies.

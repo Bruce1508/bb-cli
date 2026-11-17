@@ -4,6 +4,15 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolated_bb_dir(tmp_path, monkeypatch):
+    """Chat history and tool DB reads go to tmp_path: never the student's real ~/.bb."""
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.db.BB_DIR", tmp_path)
+
 
 def test_aiconfig_defaults():
     from bb.config import AIConfig
@@ -57,9 +66,10 @@ def test_build_ollama_tools_schema_shape():
         assert tool["function"]["parameters"]["type"] == "object"
 
 
-def test_dispatch_tool_known():
+def test_dispatch_tool_known(tmp_path, monkeypatch):
     """dispatch_tool calls a real tool function and returns JSON string."""
     import json
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
     from bb.ai.chat import dispatch_tool
     result = dispatch_tool("get_course_list", {})
     parsed = json.loads(result)
@@ -630,13 +640,15 @@ def test_ollama_turn_max_tool_rounds_exhausted(monkeypatch):
     assert engine._msgs[-1] == {"role": "assistant", "content": result}
 
 
-def test_handle_slash_sync(monkeypatch):
+def test_handle_slash_sync(monkeypatch, tmp_path):
     """/sync calls subprocess with sys.executable and reports success/failure."""
     import sys
     from io import StringIO
     from unittest.mock import MagicMock, patch
     from rich.console import Console
 
+    # Engine history and sync_now's recent_changes both read BB_DIR: never the real ~/.bb.
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
     mock_pkg = MagicMock()
     m1 = MagicMock()
     m1.model = "qwen3:8b"
