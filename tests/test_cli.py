@@ -244,6 +244,8 @@ def test_init_telegram_asks_for_token_and_chat_id(tmp_path):
     assert cfg.notification.telegram_chat_id == "987"
 
 
-def test_init_no_longer_says_coming_soon(tmp_path):
+def test_init_menu_shows_working_push_providers(tmp_path):
     result = _invoke_init(tmp_path)
-    assert "coming soon" not in result.output
+    assert "phone push" in result.output
+    assert "Telegram bot" in result.output
+    assert "Discord webhook" in result.output
