@@ -288,6 +288,18 @@ def test_read_file_content_finds_file_under_legacy_short_code(legacy_download):
     assert result["filename"] == "Tentative Syllabus.txt"
 
 
+@pytest.mark.parametrize("course", ["all", "none", "*", "!!!"])
+def test_read_file_content_never_reads_across_all_courses(legacy_download, course):
+    assert read_file_content(course, "t") == {"error": "file not found"}
+
+
+def test_read_file_content_prefers_the_course_own_file_over_legacy(legacy_download, tmp_path):
+    own = tmp_path / "files" / "BTP200NAA"
+    own.mkdir(parents=True)
+    (own / "Tentative Syllabus.txt").write_text("current section copy")
+    assert read_file_content("BTP200NAA", "syllabus")["text"] == "current section copy"
+
+
 def test_search_file_text_finds_legacy_download(legacy_download):
     from bb.tools.queries import search_file_text
     hits = search_file_text("hello", course="btp200")

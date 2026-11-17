@@ -392,11 +392,16 @@ def read_file_content(course: str, filename: str, offset: int = 0) -> dict:
         {"error": "unsupported file type: <ext>"} if not PDF/DOCX/PPTX/TXT/MD
         {"error": "unreadable: <reason>"} if extraction fails
     """
-    course = resolve_course(course) or "NONE"
+    course = resolve_course(course)
+    # "all"/"none"/"*" resolve to no filter; a file read must name ONE course, never
+    # fall through to every course's downloads.
+    if course is None or course == "NONE":
+        return {"error": "file not found"}
+    course = course.upper()
     files_root = _config_module.BB_DIR / "files"
     # Rows list_downloaded_files returns are already limited to path-safe codes.
-    codes = {course.upper()} | {f["course"].upper() for f in list_downloaded_files(course)}
-    dirs = [files_root / c for c in sorted(codes)]
+    legacy = {f["course"].upper() for f in list_downloaded_files(course)} - {course}
+    dirs = [files_root / c for c in [course, *sorted(legacy)]]  # the course's own files first
     match = next(
         (
             f for d in dirs if d.is_dir() for f in sorted(d.iterdir())
