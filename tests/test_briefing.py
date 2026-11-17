@@ -1,13 +1,13 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-from bb.adapters.base import Deadline
+from bb.adapters.base import Announcement, Deadline
 from bb.briefing import briefing_text
 from bb.db import Database
 from bb.tools.queries import get_briefing
 
 EMPTY = {"urgent_deadlines": [], "later_this_week": 0, "recent_changes": [],
-         "unread_announcements": [], "last_sync": None}
+         "unread_announcements": [], "unread_count": 0, "last_sync": None}
 
 
 def _seed(tmp_path, hours_list):
@@ -98,3 +98,37 @@ def test_digest_can_be_disabled(tmp_path):
     with patch("bb.briefing.dispatch_notify") as m:
         assert send_daily_digest(db, NotificationConfig(daily_digest=False), at8) is False
     m.assert_not_called()
+
+
+def test_briefing_reports_true_unread_count(tmp_path):
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    now = datetime.now(timezone.utc)
+    for i in range(12):
+        db.upsert_announcement(Announcement(f"a{i}", "BTP200", f"Ann {i}", "b", now, None))
+    db.close()
+    with patch("bb.config.BB_DIR", tmp_path):
+        b = get_briefing()
+    assert b["unread_count"] == 12
+    assert len(b["unread_announcements"]) == 5
+    assert "12 unread announcements" in briefing_text(b)
+
+
+def test_briefing_missing_db_unread_count_zero(tmp_path):
+    with patch("bb.config.BB_DIR", tmp_path / "nope"):
+        assert get_briefing()["unread_count"] == 0
+
+
+def test_briefing_last_sync_is_last_successful(tmp_path):
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    db._conn.execute(
+        "INSERT INTO sync_log (synced_at, source, items_new, items_updated, error)"
+        " VALUES ('2026-01-01T10:00:00+00:00', 'ical', 1, 0, NULL)")
+    db._conn.execute(
+        "INSERT INTO sync_log (synced_at, source, items_new, items_updated, error)"
+        " VALUES ('2026-01-02T10:00:00+00:00', 'ical', 0, 0, 'boom')")
+    db._conn.commit()
+    db.close()
+    with patch("bb.config.BB_DIR", tmp_path):
+        assert get_briefing()["last_sync"] == "2026-01-01T10:00:00+00:00"

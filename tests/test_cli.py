@@ -302,3 +302,16 @@ def test_init_ntfy_invalid_topic_reprompts(tmp_path):
     result = _invoke_init(tmp_path, inputs="\n\n2\nbad topic!\ngood-topic\n\n")
     assert result.exit_code == 0, result.output
     assert _load(tmp_path).notification.ntfy_topic == "good-topic"
+
+
+def test_auto_setup_warns_when_interval_exceeds_reminder_window(tmp_path):
+    from bb.cli import app
+    with (
+        patch("bb.config.BB_DIR", tmp_path),
+        patch("bb.cli.install_auto_sync", return_value=("macOS", "ok")),
+    ):
+        long = CliRunner().invoke(app, ["auto-setup", "--interval", "8"])
+        ok = CliRunner().invoke(app, ["auto-setup", "--interval", "4"])
+    assert long.exit_code == 0, long.output
+    assert "8h can miss the 6-hour" in long.output
+    assert "can miss" not in ok.output

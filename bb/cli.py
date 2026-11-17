@@ -260,13 +260,18 @@ def today() -> None:
     """Show what matters today: urgent deadlines, changes, unread announcements."""
     from bb.tools.queries import get_briefing
 
+    b = get_briefing()
+    if not b.get("last_sync"):
+        console.print("👋 Not set up yet — run [bold]bb setup[/bold] to connect Blackboard.")
+        return
     _warn_if_session_stale()
-    _render_briefing(get_briefing())
+    _render_briefing(b)
 
 
 def _render_briefing(b: dict) -> None:
     if b.get("last_sync"):
-        sync_note = f"last sync {b['last_sync'][:16].replace('T', ' ')} UTC"
+        local = datetime.fromisoformat(b["last_sync"]).astimezone()
+        sync_note = f"synced {local.strftime('%a %b %-d %H:%M')}"
     else:
         sync_note = "never synced — run bb sync"
     console.print(f"[bold]📅 Today[/bold]  [dim]({sync_note})[/dim]")
@@ -290,7 +295,10 @@ def _render_briefing(b: dict) -> None:
         )
     for a in b["unread_announcements"]:
         console.print(f"  📢 [cyan]{escape(a['course'])}[/cyan] {escape(a['title'])}")
-    if b["unread_announcements"]:
+    extra = b.get("unread_count", 0) - len(b["unread_announcements"])
+    if extra > 0:
+        console.print(f"  [dim]+{extra} more unread → bb ann[/dim]")
+    elif b["unread_announcements"]:
         console.print("  [dim]→ bb ann to read them[/dim]")
 
 
@@ -760,6 +768,11 @@ def auto_setup(
             console.print(f"[yellow]⚠[/yellow] {exc}")
             raise typer.Exit(code=1)
     else:
+        if interval_hours > 6:
+            console.print(
+                f"[yellow]⚠[/yellow] Syncing every {interval_hours}h can miss the 6-hour "
+                "deadline reminder; 4h is recommended."
+            )
         try:
             platform, msg = install_auto_sync(interval_hours=interval_hours)
             console.print(f"[green]✔[/green] Detected: {platform}")

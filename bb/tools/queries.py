@@ -185,11 +185,16 @@ def get_sync_status() -> dict:
             grades = db._conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0]
             row = db._conn.execute("SELECT MAX(synced_at) FROM sync_log").fetchone()
             last_sync = row[0] if row and row[0] else None
+            ok = db._conn.execute(
+                "SELECT MAX(synced_at) FROM sync_log WHERE error IS NULL"
+            ).fetchone()
+            last_successful_sync = ok[0] if ok and ok[0] else None
     except Exception:
         return {"error": "Database not initialized. Run bb init."}
 
     return {
         "last_sync": last_sync,
+        "last_successful_sync": last_successful_sync,
         "deadlines": deadlines,
         "announcements": announcements,
         "grades": grades,
@@ -390,10 +395,17 @@ def get_briefing() -> dict:
         if datetime.fromisoformat(d["due_at"]) - now <= timedelta(hours=48)
     ]
     status = get_sync_status()
+    try:
+        with Database(_config_module.BB_DIR / "bb.db") as db:
+            db.setup()
+            unread_count = db.count_unread_announcements()
+    except Exception:
+        unread_count = 0
     return {
         "urgent_deadlines": urgent,
         "later_this_week": len(week) - len(urgent),
         "recent_changes": get_recent_changes(days=2),
         "unread_announcements": get_announcements(unread=True, limit=5),
-        "last_sync": status.get("last_sync"),
+        "unread_count": unread_count,
+        "last_sync": status.get("last_successful_sync"),
     }

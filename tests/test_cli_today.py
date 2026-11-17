@@ -20,6 +20,7 @@ def test_bare_bb_shows_briefing(tmp_path):
     db.setup()
     db.upsert_deadline(Deadline("d1", "BTP200", "Lab [4]",
                                 datetime.now(timezone.utc) + timedelta(hours=5), "ical"))
+    db.log_sync("ical", 1, 0)
     db.close()
     result = _invoke(tmp_path, [])
     assert result.exit_code == 0, result.output
@@ -30,8 +31,21 @@ def test_bare_bb_shows_briefing(tmp_path):
 def test_today_empty_state(tmp_path):
     result = _invoke(tmp_path, ["today"])
     assert result.exit_code == 0, result.output
-    assert "Nothing due in the next 48h" in result.output
-    assert "never synced" in result.output
+    assert "bb setup" in result.output
+    assert "Nothing due" not in result.output
+
+
+def test_today_lists_more_unread(tmp_path):
+    from bb.adapters.base import Announcement
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    now = datetime.now(timezone.utc)
+    for i in range(8):
+        db.upsert_announcement(Announcement(f"a{i}", "BTP200", f"Ann {i}", "b", now, None))
+    db.log_sync("ical", 1, 0)
+    db.close()
+    result = _invoke(tmp_path, ["today"])
+    assert "+3 more unread" in result.output
 
 
 def test_subcommands_still_work(tmp_path):

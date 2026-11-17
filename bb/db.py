@@ -248,6 +248,11 @@ class Database:
             for r in rows
         ]
 
+    def count_unread_announcements(self) -> int:
+        return self._conn.execute(
+            "SELECT COUNT(*) FROM announcements WHERE read_at IS NULL"
+        ).fetchone()[0]
+
     def get_recent_announcements(
         self, limit: int = 20, unread_only: bool = False, course: str | None = None
     ) -> list[Announcement]:
