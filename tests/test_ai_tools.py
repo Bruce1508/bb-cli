@@ -59,9 +59,9 @@ def test_summarize_calls_read_file_content_with_correct_args():
 
 
 def test_summarize_passes_through_not_a_pdf_error():
-    with patch("bb.tools.ai_tools.read_file_content", return_value={"error": "not a PDF"}):
+    with patch("bb.tools.ai_tools.read_file_content", return_value={"error": "unsupported file type: .zip"}):
         result = summarize_content(course="BTI325", filename="notes.docx")
-    assert result["error"] == "not a PDF"
+    assert result["error"] == "unsupported file type: .zip"
 
 
 # ---------------------------------------------------------------------------

@@ -118,7 +118,7 @@ def test_dispatch_tool_coerces_string_int(tmp_path, monkeypatch):
     pdf = MagicMock(pages=[page])
     pdf.__enter__ = lambda s: s
     from bb.ai.chat import dispatch_tool
-    with patch("bb.tools.queries.pdfplumber.open", return_value=pdf):
+    with patch("bb.text_extract.pdfplumber.open", return_value=pdf):
         parsed = json.loads(dispatch_tool(
             "read_file_content", {"course": "X", "filename": "f", "offset": "8000"}))
     assert parsed["offset"] == 8000 and parsed["text"] == "a" * 1000

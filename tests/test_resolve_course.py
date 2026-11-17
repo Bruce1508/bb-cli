@@ -101,7 +101,7 @@ def test_read_file_content_cannot_escape_bb_dir(tmp_path):
     (outside / "f.pdf").write_bytes(b"%PDF secret")
     (tmp_path / "bb" / "files").mkdir(parents=True)  # as in a real ~/.bb
     with patch("bb.config.BB_DIR", tmp_path / "bb"), \
-         patch("bb.tools.queries.pdfplumber.open") as opened:
+         patch("bb.text_extract.pdfplumber.open") as opened:
         result = read_file_content("../../outside", "f")
     assert "error" in result
     opened.assert_not_called()

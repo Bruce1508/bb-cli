@@ -38,8 +38,8 @@ def summarize_content(course: str, filename: str, offset: int = 0) -> dict:
     Returns:
         On success: {filename, course, text, pages, char_count, offset, truncated}
                     plus "next_offset" when more text remains
-        On failure: {error: "file not found"} or {error: "not a PDF"} or
-                    {error: "unreadable: <reason>"}
+        On failure: {error: "file not found"} or {error: "unsupported file type: <ext>"}
+                    (PDF, DOCX, PPTX, TXT, MD are supported) or {error: "unreadable: <reason>"}
     """
     course = resolve_course(course) or course  # raises on an ambiguous course
     return read_file_content(course=course, filename=filename, offset=offset)

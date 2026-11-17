@@ -11,8 +11,6 @@ from __future__ import annotations
 
 import re
 
-import pdfplumber
-
 import bb.config as _config_module
 from bb.db import Database
 
@@ -345,7 +343,7 @@ def list_downloaded_files(course: str | None = None) -> list[dict]:
 
 
 def read_file_content(course: str, filename: str, offset: int = 0) -> dict:
-    """Extract text content from a downloaded PDF file.
+    """Extract text from a downloaded course file (PDF, DOCX, PPTX, TXT, MD).
 
     Use when student asks to summarize, explain, or quote from a specific course file.
     Returns up to 8000 characters starting at offset; if the result has "next_offset",
@@ -360,8 +358,8 @@ def read_file_content(course: str, filename: str, offset: int = 0) -> dict:
         {"filename", "course", "text", "pages", "char_count", "offset", "truncated"}
         plus "next_offset" when more text remains
         {"error": "file not found"} if no match
-        {"error": "not a PDF"} if file extension is not .pdf
-        {"error": "unreadable: <reason>"} if pdfplumber fails
+        {"error": "unsupported file type: <ext>"} if not PDF/DOCX/PPTX/TXT/MD
+        {"error": "unreadable: <reason>"} if extraction fails
     """
     course = resolve_course(course) or course.upper()
     BB_DIR = _config_module.BB_DIR
@@ -374,14 +372,16 @@ def read_file_content(course: str, filename: str, offset: int = 0) -> dict:
     )
     if match is None:
         return {"error": "file not found"}
-    if match.suffix.lower() != ".pdf":
-        return {"error": "not a PDF"}
+    from bb.text_extract import UnsupportedFile, extract_pages
+
     try:
-        with pdfplumber.open(match) as pdf:
-            page_count = len(pdf.pages)
-            text = "\n".join(p.extract_text() or "" for p in pdf.pages)
+        pages = extract_pages(match)
+    except UnsupportedFile as e:
+        return {"error": f"unsupported file type: {e}"}
     except Exception as e:
         return {"error": f"unreadable: {e}"}
+    page_count = len(pages)
+    text = "\n".join(pages)
     offset = max(0, offset)
     end = offset + _READ_CHUNK
     result = {
