@@ -136,8 +136,16 @@ class Database:
             current = 0
 
         for version in sorted(MIGRATIONS):
-            if version > current:
-                self._conn.executescript(MIGRATIONS[version])
+            if version <= current:
+                continue
+            # ALTER ... ADD COLUMN isn't idempotent: tolerate a racing/crashed earlier apply.
+            if version == 7 and any(
+                r[1] == "url" for r in self._conn.execute("PRAGMA table_info(downloads)")
+            ):
+                self._conn.execute("INSERT OR IGNORE INTO schema_version VALUES (7)")
+                self._conn.commit()
+                continue
+            self._conn.executescript(MIGRATIONS[version])
 
     def close(self) -> None:
         """Close the SQLite connection."""

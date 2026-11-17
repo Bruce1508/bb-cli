@@ -101,3 +101,34 @@ def test_migration_7_adds_url_and_record_download_stores_it(tmp_path):
         row = db._conn.execute("SELECT url FROM downloads").fetchone()
         version = db._conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
     assert row[0] == "https://h/a.pdf" and version >= 7
+
+
+def _v6_db(path):
+    from bb.db import MIGRATIONS
+    db = Database(path)
+    for v in range(1, 7):
+        db._conn.executescript(MIGRATIONS[v])
+    return db
+
+
+def test_migration_7_recovers_from_partial_apply(tmp_path):
+    path = tmp_path / "bb.db"
+    db = _v6_db(path)
+    db._conn.execute("ALTER TABLE downloads ADD COLUMN url TEXT")  # crash before version insert
+    db._conn.commit()
+    db.close()
+    with Database(path) as db2:
+        db2.setup()
+        assert db2._conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 7
+
+
+def test_migration_7_double_setup_on_two_instances(tmp_path):
+    path = tmp_path / "bb.db"
+    _v6_db(path).close()
+    a, b = Database(path), Database(path)
+    a.setup()
+    b._conn.execute("SELECT 1")  # b opened while still at v6
+    b.setup()
+    assert b._conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 7
+    a.close()
+    b.close()
