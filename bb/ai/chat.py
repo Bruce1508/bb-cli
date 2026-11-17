@@ -173,6 +173,9 @@ class ChatEngine:
         self._cfg = cfg
         self.provider, self.model = self._detect_provider()
         self._msgs: list[dict] = []
+        # Snapshot before any turn is saved, so /resume never re-reads this session's turns.
+        self._prior_history: list[dict] = self._load_history()
+        self._resumed = resume
         self._reset_history(resume)
 
     def _history_path(self) -> Path:
@@ -210,18 +213,22 @@ class ChatEngine:
         from bb.ai.prompts import SYSTEM_PROMPT
         self._msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
         if resume:
-            self._msgs.extend(self._load_history())
+            self._msgs.extend(self._prior_history)
 
     def resume_history(self) -> int:
         """Insert the persisted conversation before this session's turns. Returns count loaded."""
-        history = self._load_history()
-        self._msgs = [self._msgs[0], *history, *self._msgs[1:]]
-        return len(history)
+        if self._resumed or not self._prior_history:
+            return 0
+        self._msgs = [self._msgs[0], *self._prior_history, *self._msgs[1:]]
+        self._resumed = True
+        return len(self._prior_history)
 
     def clear_history(self) -> None:
         """Reset conversation history to system prompt only and wipe the history file."""
         from bb.ai.prompts import SYSTEM_PROMPT
         self._msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self._prior_history = []
+        self._resumed = True
         path = self._history_path()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -479,7 +486,10 @@ def _handle_slash(cmd_line: str, engine: "ChatEngine", con: "Console") -> bool:
 
     elif cmd == "/resume":
         n = engine.resume_history()
-        con.print(f"[dim]Loaded {n} earlier messages.[/dim]")
+        if n:
+            con.print(f"[dim]Loaded {n} earlier messages.[/dim]")
+        else:
+            con.print("[dim]No earlier conversation found.[/dim]")
 
     elif cmd == "/courses":
         from bb.tools.queries import get_course_list

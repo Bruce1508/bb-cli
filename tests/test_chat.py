@@ -831,6 +831,56 @@ def test_new_session_does_not_load_old_history(monkeypatch, tmp_path):
     assert engine._msgs[1]["content"] == "old"
 
 
+def _resume_engine(monkeypatch, tmp_path, prepopulate=True):
+    import sys
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.ai.chat._config_module.BB_DIR", tmp_path)
+    if prepopulate:
+        (tmp_path / "chat_history.json").write_text(
+            json.dumps([{"role": "user", "content": "old"}, {"role": "assistant", "content": "olda"}])
+        )
+    monkeypatch.setitem(sys.modules, "ollama", _make_mock_ollama_module())
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+    from bb.ai.chat import ChatEngine
+    from bb.config import BBConfig
+    return ChatEngine(BBConfig())
+
+
+def test_resume_after_turn_does_not_duplicate(monkeypatch, tmp_path):
+    engine = _resume_engine(monkeypatch, tmp_path)
+    engine._msgs += [{"role": "user", "content": "q"}, {"role": "assistant", "content": "a"}]
+    engine._save_history("q", "a")
+    assert engine.resume_history() == 2
+    assert [m["content"] for m in engine._msgs[1:]] == ["old", "olda", "q", "a"]
+
+
+def test_resume_twice_is_noop(monkeypatch, tmp_path):
+    engine = _resume_engine(monkeypatch, tmp_path)
+    assert engine.resume_history() == 2
+    n = len(engine._msgs)
+    assert engine.resume_history() == 0
+    assert len(engine._msgs) == n
+
+
+def test_resume_after_clear_returns_zero(monkeypatch, tmp_path):
+    engine = _resume_engine(monkeypatch, tmp_path)
+    engine.clear_history()
+    assert engine.resume_history() == 0
+    assert len(engine._msgs) == 1
+
+
+def test_slash_resume_without_history_says_so(monkeypatch, tmp_path):
+    import io
+
+    from rich.console import Console
+
+    from bb.ai.chat import _handle_slash
+    engine = _resume_engine(monkeypatch, tmp_path, prepopulate=False)
+    buf = io.StringIO()
+    _handle_slash("/resume", engine, Console(file=buf, width=200))
+    assert "No earlier conversation found." in buf.getvalue()
+
+
 def test_slash_sync_uses_sync_now():
     import io
     from unittest.mock import MagicMock, patch
