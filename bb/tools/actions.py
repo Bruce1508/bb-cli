@@ -20,8 +20,10 @@ def _run_cli(*args: str, timeout: int) -> tuple[bool, str]:
     """Run `python -m bb.cli <args>`; return (ok, last few non-empty output lines)."""
     try:
         r = subprocess.run(
-            [sys.executable, "-m", "bb.cli", *args],
-            capture_output=True, text=True, timeout=timeout,
+            # -P: the chat's cwd must not shadow the installed bb package.
+            # stdin=DEVNULL: the child must never read the MCP stdio stream or wait on it.
+            [sys.executable, "-P", "-m", "bb.cli", *args],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired:
         return False, f"timed out after {timeout}s"

@@ -74,3 +74,12 @@ def test_download_course_file_dedups_folder_and_child_match(tmp_path):
             out = download_course_file("BTP200", "week 5")
     assert out["ok"] is True
     assert out["downloaded"] == ["Week 5 Slides.pptx"]  # folder + child matched, saved once
+
+
+def test_run_cli_never_shares_stdin_and_ignores_cwd(tmp_path):
+    """stdin=DEVNULL keeps MCP protocol bytes away from the child; -P stops cwd shadowing bb."""
+    with patch("bb.config.BB_DIR", tmp_path), \
+         patch("bb.tools.actions.subprocess.run", return_value=_ok()) as run:
+        sync_now()
+    assert run.call_args.kwargs["stdin"] is subprocess.DEVNULL
+    assert run.call_args.args[0][1:4] == ["-P", "-m", "bb.cli"]

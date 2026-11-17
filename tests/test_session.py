@@ -285,3 +285,32 @@ def test_get_key_generates_and_stores_new_key_on_first_run(tmp_path):
     assert isinstance(key, bytes)
     Fernet(key)  # valid Fernet key
     mock_set.assert_called_once()
+
+
+def test_get_key_without_keyring_or_terminal_raises_instead_of_prompting(tmp_path):
+    """MCP/cron have no tty: a password prompt would corrupt stdout and eat stdin."""
+    import keyring.errors
+
+    mgr = SessionManager(tmp_path / "session.enc")
+    with (
+        patch("keyring.get_password", side_effect=keyring.errors.NoKeyringError()),
+        patch("sys.stdin.isatty", return_value=False),
+        patch("typer.prompt") as prompt,
+    ):
+        with pytest.raises(SessionError, match="bb auth"):
+            mgr.get_key()
+    prompt.assert_not_called()
+
+
+def test_get_key_without_keyring_prompts_in_a_terminal(tmp_path):
+    import keyring.errors
+
+    mgr = SessionManager(tmp_path / "session.enc")
+    with (
+        patch("keyring.get_password", side_effect=keyring.errors.NoKeyringError()),
+        patch("sys.stdin.isatty", return_value=True),
+        patch("typer.prompt", return_value="pw") as prompt,
+    ):
+        key = mgr.get_key()
+    prompt.assert_called_once()
+    assert key == mgr._derive_key_from_password("pw")
