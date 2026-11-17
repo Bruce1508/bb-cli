@@ -9,6 +9,8 @@ Each function:
 
 from __future__ import annotations
 
+import re
+
 import pdfplumber
 
 import bb.config as _config_module
@@ -186,7 +188,8 @@ def resolve_course(text: str | None) -> str | None:
 
     None / 'all' / 'any' / '*' / 'none' / '' mean "no filter" → None.
     Unique match on code substring, then on display name → that code.
-    No match or ambiguous → text.upper(), so filters return nothing rather than everything.
+    No match or ambiguous → text.upper() stripped to [A-Z0-9_-] (never a path), so filters
+    return nothing rather than everything.
     """
     if text is None or text.strip().lower() in _NO_FILTER:
         return None
@@ -202,7 +205,8 @@ def resolve_course(text: str | None) -> str | None:
     if len(hits) == 1:
         return hits[0]
     # ponytail: ambiguous input matches nothing; return candidates if students hit this often
-    return upper
+    # Callers use the code as a path component (files/<code>), so it may only hold safe chars.
+    return re.sub(r"[^A-Z0-9_-]", "", upper) or "NONE"
 
 
 def get_sync_status() -> dict:
