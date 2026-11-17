@@ -24,12 +24,13 @@ def test_render_digest_empty_is_blank():
 
 def test_notify_changes_dedups(tmp_path):
     from bb.cli import _notify_changes
+    from bb.config import NotificationConfig
     db = Database(tmp_path / "bb.db")
     db.setup()
     now = datetime.now(timezone.utc).isoformat()
     change = Change("BTP200", "deadline", "d1", "Lab 4", "due_at", "due_moved",
                     "a", "b", now)
     with patch("bb.cli.dispatch_notify") as m:
-        _notify_changes(db, [change], provider="terminal", ntfy_topic=None)
-        _notify_changes(db, [change], provider="terminal", ntfy_topic=None)
+        _notify_changes(db, [change], NotificationConfig())
+        _notify_changes(db, [change], NotificationConfig())
     assert m.call_count == 1  # second call deduped within cooldown

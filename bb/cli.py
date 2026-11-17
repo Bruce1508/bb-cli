@@ -50,7 +50,7 @@ def _render_change_digest(changes: list) -> str:
     return f"⟳ {n} change{'s' if n != 1 else ''}: {humanize(changes)}"
 
 
-def _notify_changes(db, changes, provider, ntfy_topic) -> None:
+def _notify_changes(db, changes, ncfg) -> None:
     """Fire one deduped notification per changed item+field (6h cooldown)."""
     from bb.changes import humanize
 
@@ -60,7 +60,7 @@ def _notify_changes(db, changes, provider, ntfy_topic) -> None:
         key = f"change:{ch.item_id}:{ch.field}"
         if db.was_notified_recently(key, within_hours=_CHANGE_COOLDOWN_HOURS):
             continue
-        dispatch_notify(provider, "bb", humanize([ch]), ntfy_topic)
+        dispatch_notify(ncfg, "bb", humanize([ch]), priority="high")
         db.log_notification(key)
 
 
@@ -192,7 +192,7 @@ def import_ical(
     if new_count > 0:
         label = f"{new_count} new deadline{'s' if new_count != 1 else ''} synced"
         cfg2 = load_config()
-        dispatch_notify(cfg2.notification.provider, "bb", label, cfg2.notification.ntfy_topic)
+        dispatch_notify(cfg2.notification, "bb", label)
         console.print(f"[blue]🔔[/blue] {label}")
 
 
@@ -410,10 +410,10 @@ def sync(
                 db.log_sync("preflight", 0, 0, error="session_dead")
                 # No cooldown — probe failures need immediate user action
                 dispatch_notify(
-                    cfg.notification.provider,
+                    cfg.notification,
                     "bb — Session Expired",
                     "Run `bb auth` to re-authenticate.",
-                    cfg.notification.ntfy_topic,
+                    priority="high",
                 )
                 db.log_notification("session_expired_probe")
             raise typer.Exit(code=1)
@@ -501,10 +501,10 @@ def sync(
             db.log_sync("stream", 0, 0, error="session_expired")
             if not db.was_notified_recently("session_expired", within_hours=24):
                 dispatch_notify(
-                    cfg.notification.provider,
+                    cfg.notification,
                     "bb — Session Expired",
                     "Run `bb auth` to re-authenticate.",
-                    cfg.notification.ntfy_topic,
+                    priority="high",
                 )
                 db.log_notification("session_expired")
     except Exception as exc:
@@ -572,12 +572,12 @@ def sync(
         digest = _render_change_digest(changes)
         if digest:
             console.print(f"[cyan]{digest}[/cyan]")
-            _notify_changes(db, changes, cfg.notification.provider, cfg.notification.ntfy_topic)
+            _notify_changes(db, changes, cfg.notification)
 
     # --- Notify ---
     if total_new > 0:
         label = f"{total_new} new item{'s' if total_new != 1 else ''} synced"
-        dispatch_notify(cfg.notification.provider, "bb", label, cfg.notification.ntfy_topic)
+        dispatch_notify(cfg.notification, "bb", label)
         console.print(f"[blue]🔔[/blue] {label}")
 
 
