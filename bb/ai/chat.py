@@ -121,6 +121,7 @@ def dispatch_tool(name: str, args: dict) -> str:
 # ---------------------------------------------------------------------------
 
 _TOOL_LABELS: dict[str, str] = {
+    "get_briefing": "Checking what matters today",
     "get_upcoming_deadlines": "Checking deadlines",
     "get_grades": "Checking grades",
     "get_announcements": "Checking announcements",

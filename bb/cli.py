@@ -6,6 +6,7 @@ import subprocess
 import time
 import webbrowser
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -16,7 +17,7 @@ from rich.table import Table
 
 import bb.config as _config_module
 from bb.auto_setup import install_auto_sync, uninstall_auto_sync
-from bb.config import NotificationConfig, load_config, save_config
+from bb.config import BBConfig, NotificationConfig, load_config, save_config
 from bb.db import Database
 from bb.downloader import Downloader, DownloadError
 from bb.notify import dispatch_notify
@@ -24,6 +25,13 @@ from bb.parsers.ical import ICalParseError, parse_ical
 
 app = typer.Typer(help="bb — Blackboard LMS terminal client")
 console = Console()
+
+
+@app.callback(invoke_without_command=True)
+def _main(ctx: typer.Context) -> None:
+    """bb — Blackboard in your terminal. Run `bb` alone to see what matters today."""
+    if ctx.invoked_subcommand is None:
+        today()
 
 
 def _warn_if_session_stale() -> None:
@@ -248,6 +256,55 @@ def import_ical(
 
 
 @app.command()
+def today() -> None:
+    """Show what matters today: urgent deadlines, changes, unread announcements."""
+    from bb.tools.queries import get_briefing
+
+    # No config.toml = never set up. Not "no successful sync": `bb import-ical` writes
+    # config + deadlines without a sync_log row, and failing syncs log only errors —
+    # those users must see their stored deadlines, not be sent back to `bb setup`.
+    if not (_config_module.BB_DIR / "config.toml").exists():
+        console.print("👋 Not set up yet — run [bold]bb setup[/bold] to connect Blackboard.")
+        return
+    _warn_if_session_stale()
+    _render_briefing(get_briefing())
+
+
+def _render_briefing(b: dict) -> None:
+    if b.get("last_sync"):
+        local = datetime.fromisoformat(b["last_sync"]).astimezone()
+        sync_note = f"synced {local.strftime('%a %b %-d %H:%M')}"
+    else:
+        sync_note = "never synced — run bb sync"
+    console.print(f"[bold]📅 Today[/bold]  [dim]({sync_note})[/dim]")
+
+    urgent = b["urgent_deadlines"]
+    if urgent:
+        for d in urgent:
+            console.print(
+                f"  🔴 [cyan]{escape(d['course'])}[/cyan] {escape(d['title'])}"
+                f" — [bold]{d['when']}[/bold]"
+            )
+    else:
+        console.print("  [green]Nothing due in the next 48h.[/green]")
+    if b["later_this_week"]:
+        console.print(f"  [dim]+{b['later_this_week']} more this week → bb due[/dim]")
+
+    for c in b["recent_changes"][:5]:
+        console.print(
+            f"  ⟳ [cyan]{escape(c['course'])}[/cyan] {escape(c['title'])}:"
+            f" {c['change_type'].replace('_', ' ')}"
+        )
+    for a in b["unread_announcements"]:
+        console.print(f"  📢 [cyan]{escape(a['course'])}[/cyan] {escape(a['title'])}")
+    extra = b.get("unread_count", 0) - len(b["unread_announcements"])
+    if extra > 0:
+        console.print(f"  [dim]+{extra} more unread → bb ann[/dim]")
+    elif b["unread_announcements"]:
+        console.print("  [dim]→ bb ann to read them[/dim]")
+
+
+@app.command()
 def due(
     days: int = typer.Option(7, "--days", "-d", help="Show deadlines within N days"),
     course: Optional[str] = typer.Option(None, "--course", "-c", help="Filter by course code"),
@@ -421,6 +478,32 @@ def status() -> None:
             )
 
 
+def _run_proactive(cfg: BBConfig, db_path: Path, digest: bool = True) -> None:
+    """Send due-soon reminders and the daily digest (each deduped). Never fails the sync."""
+    from bb.briefing import send_daily_digest
+    from bb.reminders import send_reminders
+
+    try:
+        with Database(db_path) as db:
+            db.setup()
+            n = send_reminders(db, cfg.notification)
+        if n:
+            console.print(f"[blue]⏰[/blue] {n} deadline reminder{'s' if n != 1 else ''} sent")
+    except Exception as exc:
+        console.print(f"[yellow]⚠[/yellow] Reminders failed: {exc}")
+
+    if not digest:
+        return
+    try:
+        with Database(db_path) as db:
+            db.setup()
+            digest_sent = send_daily_digest(db, cfg.notification)
+        if digest_sent:
+            console.print("[blue]🔔[/blue] Daily digest sent")
+    except Exception as exc:
+        console.print(f"[yellow]⚠[/yellow] Daily digest failed: {exc}")
+
+
 @app.command()
 def sync(
     ical_only: bool = typer.Option(
@@ -449,6 +532,7 @@ def sync(
     BB_DIR = _config_module.BB_DIR
     db_path = BB_DIR / "bb.db"
     total_new = 0
+    session_dead = False
 
     # --- Preflight: verify session liveness before any Playwright work ---
     if not ical_only and not dry_run:
@@ -462,7 +546,11 @@ def sync(
                 return
         except SessionError as exc:
             console.print(f"[red]✘[/red] {exc}")
-            console.print("[dim]  Sync aborted — no data was changed.[/dim]")
+            if not refresh_only:
+                console.print(
+                    "[dim]↩ Session expired — syncing deadlines from iCal only. "
+                    "Run bb auth for grades and announcements.[/dim]"
+                )
             with Database(db_path) as db:
                 db.setup()
                 db.log_sync("preflight", 0, 0, error="session_dead")
@@ -474,7 +562,10 @@ def sync(
                     priority="high",
                 )
                 db.log_notification("session_expired_probe")
-            raise typer.Exit(code=1)
+            if refresh_only:  # liveness probe only
+                raise typer.Exit(code=1)
+            session_dead = True
+            ical_only = True  # iCal needs no auth; fall through to Phase 1
     elif refresh_only:
         console.print("[dim]--refresh-only has no effect with --ical-only or --dry-run[/dim]")
         return
@@ -537,7 +628,12 @@ def sync(
     else:
         console.print("[dim]Phase 1: No iCal URL configured — run bb import-ical <url> first[/dim]")
 
+    if not dry_run:
+        # full sync: the digest waits for the end-of-sync call, after all phases
+        _run_proactive(cfg, db_path, digest=ical_only)
     if ical_only or dry_run:
+        if session_dead:
+            raise typer.Exit(code=1)
         return
 
     # --- Phase 2: Activity Stream ---
@@ -650,6 +746,8 @@ def sync(
         dispatch_notify(cfg.notification, "bb", label)
         console.print(f"[blue]🔔[/blue] {label}")
 
+    _run_proactive(cfg, db_path)  # again: Phase 2 may have found stream-only deadlines
+
 
 @app.command()
 def auto_setup(
@@ -672,6 +770,11 @@ def auto_setup(
             console.print(f"[yellow]⚠[/yellow] {exc}")
             raise typer.Exit(code=1)
     else:
+        if interval_hours > 6:
+            console.print(
+                f"[yellow]⚠[/yellow] Syncing every {interval_hours}h can miss the 6-hour "
+                "deadline reminder; 4h is recommended."
+            )
         try:
             platform, msg = install_auto_sync(interval_hours=interval_hours)
             console.print(f"[green]✔[/green] Detected: {platform}")
@@ -1139,6 +1242,79 @@ def setup_browsers() -> None:
     result = subprocess.run(["playwright", "install", "chromium"], check=False)
     if result.returncode != 0:
         raise typer.Exit(1)
+
+
+def _auth_if_needed() -> None:
+    """Skip the browser login when the saved session is still fresh (re-running setup)."""
+    from bb.security.session import SessionManager
+
+    sm = SessionManager(_config_module.BB_DIR / "session.enc")
+    if sm.check_session_age() == "fresh":
+        console.print("[green]✔[/green] Already logged in.")
+        return
+    auth()
+
+
+def _print_ai_status() -> None:
+    from bb.ai.providers.ollama import get_model, is_available
+
+    model = get_model(load_config().ai.model) if is_available() else None
+    if model:
+        console.print(f"[green]✔[/green] AI ready: {model} — try [bold]bb chat[/bold]")
+    else:
+        console.print(
+            "[yellow]⚠[/yellow] No local AI yet (optional, only needed for bb chat): "
+            "install https://ollama.com then run [bold]ollama pull qwen3:8b[/bold]"
+        )
+
+
+def _first_sync_succeeded(since: str) -> bool:
+    """True if a sync_log row without an error was written at/after `since` (ISO UTC)."""
+    with Database(_config_module.BB_DIR / "bb.db") as db:
+        db.setup()
+        row = db._conn.execute(
+            "SELECT 1 FROM sync_log WHERE error IS NULL AND synced_at >= ? LIMIT 1", (since,)
+        ).fetchone()
+    return row is not None
+
+
+@app.command()
+def setup() -> None:
+    """One command to get going: settings → browser → login → first sync → auto-sync."""
+    started = datetime.now(timezone.utc).isoformat()
+    steps = [
+        ("1/4 Settings", init),
+        ("2/4 Browser", setup_browsers),
+        ("3/4 Blackboard login", _auth_if_needed),
+        ("4/4 First sync", lambda: sync(ical_only=False, dry_run=False, refresh_only=False)),
+    ]
+    for label, step in steps:
+        console.rule(f"[bold]{label}[/bold]")
+        try:
+            step()
+        except (typer.Exit, typer.Abort, KeyboardInterrupt) as exc:
+            if not isinstance(exc, typer.Exit) or exc.exit_code:
+                console.print(
+                    f"[red]✘[/red] {label} failed. Fix the error above, then run "
+                    "[bold]bb setup[/bold] again (finished steps are safe to repeat)."
+                )
+                raise
+
+    if not _first_sync_succeeded(started):
+        console.print(
+            "[red]✘[/red] First sync didn't succeed — fix the errors above, then run "
+            "[bold]bb setup[/bold] again."
+        )
+        raise typer.Exit(1)
+
+    if typer.confirm("Sync automatically every few hours? (needed for reminders)", default=True):
+        auto_setup(disable=False, interval=0)
+    _print_ai_status()
+    console.print("\n[green]✔ Done.[/green] Run [bold]bb[/bold] any time to see what's due.")
+    console.print(
+        "[dim]Tip: add your Blackboard iCal URL to Google/Apple Calendar to see deadlines "
+        "there too.[/dim]"
+    )
 
 
 if __name__ == "__main__":

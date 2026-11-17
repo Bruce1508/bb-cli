@@ -185,11 +185,16 @@ def get_sync_status() -> dict:
             grades = db._conn.execute("SELECT COUNT(*) FROM grades").fetchone()[0]
             row = db._conn.execute("SELECT MAX(synced_at) FROM sync_log").fetchone()
             last_sync = row[0] if row and row[0] else None
+            ok = db._conn.execute(
+                "SELECT MAX(synced_at) FROM sync_log WHERE error IS NULL"
+            ).fetchone()
+            last_successful_sync = ok[0] if ok and ok[0] else None
     except Exception:
         return {"error": "Database not initialized. Run bb init."}
 
     return {
         "last_sync": last_sync,
+        "last_successful_sync": last_successful_sync,
         "deadlines": deadlines,
         "announcements": announcements,
         "grades": grades,
@@ -369,3 +374,38 @@ def get_recent_changes(days: int = 7, course: str | None = None) -> list[dict]:
         }
         for c in rows
     ]
+
+
+def get_briefing() -> dict:
+    """Return a one-shot overview of what matters right now.
+
+    Call this FIRST when the student asks something vague like 'what's up',
+    'what should I do today', 'catch me up', or 'anything I need to know'.
+    Combines deadlines due in the next 48 hours, how many more are due this week,
+    recent changes (moved deadlines, new grades), unread announcements, and the
+    last sync time. urgent_deadlines also includes items that became overdue in the
+    last few hours (their 'when' says 'was due …').
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    week = get_upcoming_deadlines(days=7)
+    urgent = [
+        d for d in week
+        if datetime.fromisoformat(d["due_at"]) - now <= timedelta(hours=48)
+    ]
+    status = get_sync_status()
+    try:
+        with Database(_config_module.BB_DIR / "bb.db") as db:
+            db.setup()
+            unread_count = db.count_unread_announcements()
+    except Exception:
+        unread_count = 0
+    return {
+        "urgent_deadlines": urgent,
+        "later_this_week": len(week) - len(urgent),
+        "recent_changes": get_recent_changes(days=2),
+        "unread_announcements": get_announcements(unread=True, limit=5),
+        "unread_count": unread_count,
+        "last_sync": status.get("last_successful_sync"),
+    }

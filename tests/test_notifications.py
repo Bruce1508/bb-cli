@@ -39,11 +39,25 @@ def test_ntfy_notify_uses_correct_url():
     assert url == f"{NTFY_BASE_URL}/my-topic"
 
 
-def test_ntfy_notify_sets_title_header():
-    with patch("bb.notify.ntfy.httpx.post") as mock_post:
-        ntfy_notify("my-topic", "My Title", "body")
-    headers = mock_post.call_args[1].get("headers", {})
-    assert headers.get("Title") == "My Title"
+def test_ntfy_notify_sends_non_ascii_title_and_priority_as_params():
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200)
+
+    def real_post(*args, **kwargs):
+        with httpx.Client(transport=httpx.MockTransport(handler)) as c:
+            return c.post(*args, **kwargs)
+
+    with patch("bb.notify.ntfy.httpx.post", side_effect=real_post):
+        ntfy_notify("t", "bb \u2014 due soon", "Lab_05 due in 3h", "high")
+    assert len(seen) == 1
+    assert seen[0].url.params["title"] == "bb \u2014 due soon"
+    assert seen[0].url.params["priority"] == "high"
+    assert seen[0].content.decode() == "Lab_05 due in 3h"
 
 
 def test_ntfy_notify_sends_body_as_encoded_bytes():
@@ -53,11 +67,10 @@ def test_ntfy_notify_sends_body_as_encoded_bytes():
     assert content == b"hello world"
 
 
-def test_ntfy_notify_sets_default_priority_header():
+def test_ntfy_notify_sets_default_priority_param():
     with patch("bb.notify.ntfy.httpx.post") as mock_post:
         ntfy_notify("my-topic", "title", "body")
-    headers = mock_post.call_args[1].get("headers", {})
-    assert "Priority" in headers
+    assert mock_post.call_args[1]["params"]["priority"] == "default"
 
 
 # ---------------------------------------------------------------------------

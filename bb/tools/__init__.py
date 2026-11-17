@@ -13,6 +13,7 @@ from bb.tools.ai_tools import (
 )
 from bb.tools.queries import (
     get_announcements,
+    get_briefing,
     get_course_content,
     get_course_list,
     get_grades,
@@ -25,6 +26,7 @@ from bb.tools.queries import (
 )
 
 TOOL_REGISTRY: dict[str, object] = {
+    "get_briefing": get_briefing,
     "get_upcoming_deadlines": get_upcoming_deadlines,
     "get_grades": get_grades,
     "get_announcements": get_announcements,
