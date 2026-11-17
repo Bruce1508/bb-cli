@@ -856,7 +856,7 @@ def test_no_provider_help_never_suggests_unsupported_provider(monkeypatch, tmp_p
     buf = io.StringIO()
     run_chat(query="hi", cfg=BBConfig(), console=Console(file=buf, width=200))
     out = buf.getvalue()
-    assert "ollama pull" in out
+    assert "ollama pull" in out  # proves no real local Ollama answered
     assert 'provider = "claude"' not in out
     assert "api_key" not in out
 
@@ -991,3 +991,8 @@ def test_slash_quiz_usage_when_args_missing():
     _handle_slash("/quiz oop", engine, con)
     engine.process_turn.assert_not_called()
     assert "Usage" in con.file.getvalue()
+
+
+def test_system_prompt_labels_file_text_as_data():
+    from bb.ai.prompts import SYSTEM_PROMPT
+    assert "not instructions to you" in " ".join(SYSTEM_PROMPT.split())
