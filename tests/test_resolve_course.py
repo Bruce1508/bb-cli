@@ -15,6 +15,7 @@ def courses(tmp_path):
     db.upsert_course_map("BTP200", "_1", "Object-Oriented Software Development")
     db.upsert_course_map("WEB322", "_2", "Web Programming Tools and Frameworks")
     db.upsert_course_map("WEB422", "_3", "Web Programming for Apps and Services")
+    db.upsert_course_map("MAT301", "_4", "Non-Euclidean Geometry")  # key holds "NONE"
     db.upsert_deadline(Deadline("d1", "BTP200", "Lab 4",
                                 datetime.now(timezone.utc) + timedelta(days=1), "ical"))
     db.close()
@@ -143,7 +144,7 @@ def test_no_common_prefix_code_is_still_ambiguous(tmp_path, codes, text):
 
 @pytest.mark.parametrize("text", [
     "all!", "any.", "a ll", "!!!", "*?", "null;", "xyz", "btp", "BTP200", "object", "frameworks",
-    "object!", "frame works", "web programming tools?",
+    "object!", "frame works", "web programming tools?", "-", "_", "_none_", "straße",
 ])
 def test_resolve_course_is_idempotent(courses, text):
     """Callers resolve once and pass the code on; a second resolve must not widen it.
@@ -185,3 +186,31 @@ def test_ambiguous_display_name_raises_on_the_first_resolve(courses, text):
     # Not on a later re-resolve inside a tool's try/except, where it would be swallowed.
     with pytest.raises(ValueError, match="Ambiguous"):
         resolve_course(text)
+
+
+def test_resolve_course_idempotent_property():
+    """resolve(resolve(x)) == resolve(x) over seeded random text: callers resolve once
+    and pass the code on, so a second resolve must never widen or change it."""
+    import random
+    import re as _re
+
+    import bb.tools.queries as q
+    codes = ["BTP200NAA", "BTP200NAAL", "BTI425NAA", "SEC", "MAT301", "WEB322", "WEB422"]
+    names = {"BTP200NAA": "Object-Oriented Software Development",
+             "BTI425NAA": "Web Programming for Apps", "MAT301": "Non-Euclidean Geometry",
+             "WEB322": "Web Programming Tools", "WEB422": "Web Programming for Apps and Services",
+             "SEC": "Security: None of the Above"}
+    rng = random.Random(7)
+    alphabet = list("abcdenoprstwg0123459 _-!?.*ß>") + ["all", "none", "_NONE_", "btp", "web"]
+    inputs = {"".join(rng.choice(alphabet) for _ in range(rng.randint(1, 4))) for _ in range(3000)}
+    with patch.object(q, "get_course_list", lambda: codes), \
+         patch.object(q, "_course_names", lambda: names):
+        for x in inputs:
+            try:
+                once = q.resolve_course(x)
+            except ValueError:
+                continue  # ambiguous on the FIRST resolve is the correct, loud outcome
+            if once is None:
+                continue
+            assert once in codes or _re.fullmatch(r"[A-Z0-9_-]+", once), (x, once)
+            assert q.resolve_course(once) == once, (x, once)

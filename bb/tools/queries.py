@@ -173,8 +173,8 @@ NO_MATCH = "_NONE_"
 
 
 def _name_key(s: str) -> str:
-    """Display-name match key: lowercase letters and digits only."""
-    return re.sub(r"[^a-z0-9]", "", s.lower())
+    """Display-name match key: letters and digits only, upper-cased like `safe`."""
+    return re.sub(r"[^A-Z0-9]", "", s.upper())
 
 
 def _course_names() -> dict[str, str]:
@@ -206,7 +206,8 @@ def resolve_course(text: str | None) -> str | None:
     query = text.strip()
     # Callers use the code as a path component (files/<code>), so it may only hold safe chars.
     safe = re.sub(r"[^A-Z0-9_-]", "", query.upper())
-    if not safe or safe.lower() in _NO_FILTER:  # "!!!", "all!" → still no course
+    # "!!!", "all!", and NO_MATCH itself → still no course (keeps resolution idempotent).
+    if not safe or safe == NO_MATCH or safe.lower() in _NO_FILTER:
         return NO_MATCH
     codes = get_course_list()
     if safe in codes:
@@ -221,7 +222,7 @@ def resolve_course(text: str | None) -> str | None:
         # Keyed on `safe`, not the raw text, so resolving the fallthrough `safe` again
         # makes the same comparison: resolution stays idempotent ('data base?' too).
         [code for code, name in _course_names().items()
-         if _name_key(safe) in _name_key(name)],
+         if _name_key(safe) and _name_key(safe) in _name_key(name)],
     ):
         if len(hits) == 1:
             return hits[0]
