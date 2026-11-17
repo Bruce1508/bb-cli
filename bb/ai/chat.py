@@ -482,8 +482,11 @@ def _handle_slash(cmd_line: str, engine: "ChatEngine", con: "Console") -> bool:
         what = "everything (1-2 min)" if full else "deadlines"
         con.print(f"[dim]Syncing {what}...[/dim]")
         result = sync_now(full=full)
-        icon = "[green]✔[/green]" if result["ok"] else "[yellow]⚠[/yellow]"
-        con.print(f"{icon} Sync {'complete' if result['ok'] else 'failed'}")
+        if result.get("skipped"):
+            con.print("⏸ Sync skipped — another sync is running.")
+        else:
+            icon = "[green]✔[/green]" if result["ok"] else "[yellow]⚠[/yellow]"
+            con.print(f"{icon} Sync {'complete' if result['ok'] else 'failed'}")
         if result["output"]:
             con.print(result["output"], markup=False, highlight=False, style="dim")
 

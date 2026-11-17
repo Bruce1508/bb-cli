@@ -102,3 +102,11 @@ def test_first_sync_succeeded_checks_sync_log(tmp_path):
             db.log_sync("ical", 1, 0)
         assert _first_sync_succeeded("2000-01-01T00:00:00+00:00") is True
         assert _first_sync_succeeded("2999-01-01T00:00:00+00:00") is False
+
+
+def test_setup_treats_a_lock_skipped_first_sync_as_not_failed(tmp_path):
+    calls, _, result = _run_setup(tmp_path, "y\n", fail_on="sync", raise_on=typer.Exit(75),
+                                  first_sync_ok=False)
+    assert result.exit_code == 0, result.output
+    assert "didn't succeed" not in result.output and "failed" not in result.output
+    assert calls == ["init", "browsers", "auth", "sync", "auto"]

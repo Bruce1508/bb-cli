@@ -116,3 +116,22 @@ def test_download_course_file_rejects_empty_name(tmp_path):
         for name in ("", "   "):
             out = download_course_file("BTP200", name)
             assert out["ok"] is False and "error" in out
+
+
+def test_sync_now_reports_a_lock_skip_as_not_ok(tmp_path):
+    skipped = subprocess.CompletedProcess(
+        args=[], returncode=75, stdout="Another bb sync is running — skipped.\n", stderr="")
+    with patch("bb.config.BB_DIR", tmp_path), \
+         patch("bb.tools.actions.subprocess.run", return_value=skipped):
+        out = sync_now()
+    assert out["ok"] is False and out["skipped"] is True
+
+
+def test_sync_now_keeps_reminder_and_digest_lines_beyond_the_tail(tmp_path):
+    lines = ["⏰ 2 deadline reminders sent", "🔔 Daily digest sent", "↩ Session expired — iCal"]
+    lines += [f"line {i}" for i in range(10)]
+    with patch("bb.config.BB_DIR", tmp_path), \
+         patch("bb.tools.actions.subprocess.run", return_value=_ok("\n".join(lines) + "\n")):
+        out = sync_now()
+    assert out["output"].splitlines() == lines[:3] + [f"line {i}" for i in range(4, 10)]
+    assert out["skipped"] is False and out["ok"] is True

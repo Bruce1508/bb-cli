@@ -666,6 +666,21 @@ def test_handle_slash_sync(monkeypatch):
     assert "Sync failed" in buf2.getvalue() or "⚠" in buf2.getvalue()
 
 
+def test_handle_slash_sync_reports_a_skip(tmp_path, monkeypatch):
+    from io import StringIO
+
+    from rich.console import Console
+
+    from bb.ai.chat import _handle_slash
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    buf = StringIO()
+    with patch("bb.tools.actions.sync_now",
+               return_value={"ok": False, "skipped": True, "full": False, "output": ""}):
+        _handle_slash("/sync", MagicMock(), Console(file=buf))
+    assert "⏸ Sync skipped — another sync is running." in buf.getvalue()
+    assert "failed" not in buf.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # Chat history persistence
 # ---------------------------------------------------------------------------

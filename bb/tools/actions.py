@@ -14,10 +14,16 @@ from bb.db import Database
 from bb.tools.queries import get_recent_changes, resolve_course
 
 _MAX_FILES_PER_CALL = 5
+_EX_TEMPFAIL = 75  # bb sync: another sync holds the lock
+# Lines the student must see even when they scroll out of the tail.
+_KEEP = ("reminder", "Daily digest", "skipped", "Session expired")
 
 
-def _run_cli(*args: str, timeout: int) -> tuple[bool, str]:
-    """Run `python -m bb.cli <args>`; return (ok, last few non-empty output lines)."""
+def _run_cli(*args: str, timeout: int) -> tuple[int | None, str]:
+    """Run `python -m bb.cli <args>`; return (exit code or None on timeout, output summary).
+
+    The summary is the last 6 non-empty lines plus any earlier _KEEP lines, in order.
+    """
     try:
         r = subprocess.run(
             # -P: the chat's cwd must not shadow the installed bb package.
@@ -26,9 +32,11 @@ def _run_cli(*args: str, timeout: int) -> tuple[bool, str]:
             stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        return False, f"timed out after {timeout}s"
+        return None, f"timed out after {timeout}s"
     lines = [ln for ln in (r.stdout + r.stderr).splitlines() if ln.strip()]
-    return r.returncode == 0, "\n".join(lines[-6:])
+    tail = len(lines) - 6
+    picked = [ln for i, ln in enumerate(lines) if i >= tail or any(k in ln for k in _KEEP)]
+    return r.returncode, "\n".join(dict.fromkeys(picked))
 
 
 def sync_now(full: bool = False) -> dict:
@@ -40,8 +48,14 @@ def sync_now(full: bool = False) -> dict:
     needed — it takes 1-2 minutes and needs a valid Blackboard login.
     """
     args = ("sync",) if full else ("sync", "--ical-only")
-    ok, output = _run_cli(*args, timeout=600 if full else 120)
-    return {"ok": ok, "full": full, "output": output, "recent_changes": get_recent_changes(days=1)}
+    code, output = _run_cli(*args, timeout=600 if full else 120)
+    return {
+        "ok": code == 0,
+        "skipped": code == _EX_TEMPFAIL,  # another sync was already running
+        "full": full,
+        "output": output,
+        "recent_changes": get_recent_changes(days=1),
+    }
 
 
 def refresh_course_content(course: str) -> dict:
@@ -54,9 +68,9 @@ def refresh_course_content(course: str) -> dict:
     from bb.cache import load_tree
 
     code = resolve_course(course) or course.upper()
-    ok, output = _run_cli("course", code, "--refresh", timeout=300)
+    exit_code, output = _run_cli("course", code, "--refresh", timeout=300)
     tree = load_tree(code)
-    if not ok or tree is None:
+    if exit_code != 0 or tree is None:
         return {"ok": False, "course": code, "error": output or "scrape failed"}
     return {"ok": True, "course": code, "top_level_items": [i.title for i in tree.items]}
 

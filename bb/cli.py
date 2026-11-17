@@ -506,6 +506,9 @@ def _run_proactive(cfg: BBConfig, db_path: Path, digest: bool = True) -> None:
         console.print(f"[yellow]⚠[/yellow] Daily digest failed: {exc}")
 
 
+_EX_TEMPFAIL = 75  # sysexits.h: try again later — `bb sync` skipped because the lock is held
+
+
 @contextmanager
 def _sync_lock():
     """Exclusive, non-blocking lock so a chat/MCP sync can't race the scheduled one.
@@ -545,7 +548,7 @@ def sync(
     with _sync_lock() as acquired:
         if not acquired:
             console.print("[dim]Another bb sync is running — skipped.[/dim]")
-            return
+            raise typer.Exit(code=_EX_TEMPFAIL)  # not 0: chat/MCP/setup must not report success
         _run_sync(ical_only=ical_only, dry_run=dry_run, refresh_only=refresh_only)
 
 
@@ -573,6 +576,7 @@ def _run_sync(ical_only: bool, dry_run: bool, refresh_only: bool) -> None:
     db_path = BB_DIR / "bb.db"
     total_new = 0
     session_dead = False
+    ical_failed = False
 
     # --- Preflight: verify session liveness before any Playwright work ---
     if not ical_only and not dry_run:
@@ -662,6 +666,7 @@ def _run_sync(ical_only: bool, dry_run: bool, refresh_only: bool) -> None:
             )
         except Exception as exc:
             console.print(f"[yellow]⚠[/yellow] iCal sync failed: {exc}")
+            ical_failed = True
             with Database(db_path) as db:
                 db.setup()
                 db.log_sync("ical", 0, 0, error=str(exc))
@@ -672,7 +677,7 @@ def _run_sync(ical_only: bool, dry_run: bool, refresh_only: bool) -> None:
         # full sync: the digest waits for the end-of-sync call, after all phases
         _run_proactive(cfg, db_path, digest=ical_only)
     if ical_only or dry_run:
-        if session_dead:
+        if session_dead or ical_failed:  # iCal was the whole job, so its failure is the sync's
             raise typer.Exit(code=1)
         return
 
@@ -1296,11 +1301,17 @@ def setup() -> None:
         ("3/4 Blackboard login", _auth_if_needed),
         ("4/4 First sync", lambda: sync(ical_only=False, dry_run=False, refresh_only=False)),
     ]
+    sync_skipped = False
     for label, step in steps:
         console.rule(f"[bold]{label}[/bold]")
         try:
             step()
         except (typer.Exit, typer.Abort, KeyboardInterrupt) as exc:
+            if isinstance(exc, typer.Exit) and exc.exit_code == _EX_TEMPFAIL:
+                # A scheduled sync already holds the lock; it is doing this first sync.
+                console.print("[dim]A sync is already running — it will do the first sync.[/dim]")
+                sync_skipped = True
+                continue
             if not isinstance(exc, typer.Exit) or exc.exit_code:
                 console.print(
                     f"[red]✘[/red] {label} failed. Fix the error above, then run "
@@ -1308,7 +1319,7 @@ def setup() -> None:
                 )
                 raise
 
-    if not _first_sync_succeeded(started):
+    if not sync_skipped and not _first_sync_succeeded(started):
         console.print(
             "[red]✘[/red] First sync didn't succeed — fix the errors above, then run "
             "[bold]bb setup[/bold] again."
