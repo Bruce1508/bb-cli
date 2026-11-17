@@ -45,3 +45,36 @@ def test_get_announcements_unread_passthrough(tmp_path):
     with patch("bb.config.BB_DIR", tmp_path):
         out = get_announcements(unread=True, limit=5)
     assert [a["title"] for a in out] == ["T1"]
+
+
+def test_html_to_text_decodes_entities_and_collapses_whitespace():
+    from bb.adapters.base import html_to_text
+    assert html_to_text("<p>coming up this week.&nbsp;This means</p>\n  <b>Q&amp;A</b>") == (
+        "coming up this week. This means Q&A"
+    )
+
+
+def test_bodies_already_stored_with_entities_read_back_clean(tmp_path):
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    db.upsert_announcement(Announcement(
+        id="a1", course="BTP200", title="Week 3",
+        body="coming up this week.&nbsp;This means &amp; more",
+        posted_at=datetime(2026, 11, 10, tzinfo=timezone.utc), read_at=None,
+    ))
+    db.close()
+    with patch("bb.config.BB_DIR", tmp_path):
+        out = get_announcements()
+    assert out[0]["body"] == "coming up this week. This means & more"
+
+
+def test_decoded_angle_brackets_survive_read_back(tmp_path):
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    db.upsert_announcement(Announcement(
+        id="a1", course="BTP200", title="Generics", body="Use List<T> here",
+        posted_at=datetime(2026, 11, 10, tzinfo=timezone.utc), read_at=None,
+    ))
+    db.close()
+    with patch("bb.config.BB_DIR", tmp_path):
+        assert get_announcements()[0]["body"] == "Use List<T> here"

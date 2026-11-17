@@ -225,3 +225,10 @@ def test_ann_marks_shown_announcements_read(tmp_path):
     assert "Lab moved" in first.output
     assert "Lab 5 is now Thursday." in first.output
     assert "No unread announcements." in second.output
+
+
+def test_ann_shows_stored_html_entities_decoded(tmp_path):
+    _seed_announcements(tmp_path, [_make_announcement(body="this week.&nbsp;This means")])
+    result = _invoke(tmp_path)
+    assert "&nbsp;" not in result.output
+    assert "this week. This means" in result.output
