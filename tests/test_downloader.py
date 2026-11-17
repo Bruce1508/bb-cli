@@ -188,3 +188,72 @@ def test_download_cleans_up_partial_file_after_mid_download_timeout(tmp_path):
             d.download("https://example.com/file.pdf", tmp_path, "file.pdf")
 
     assert not (tmp_path / "file.pdf").exists()
+
+
+from bb.db import Database  # noqa: E402
+from bb.downloader import (  # noqa: E402
+    collect_downloadable,
+    download_items,
+    ext_from_url,
+)
+from bb.models.content import ContentItem, find_items  # noqa: E402
+
+
+class _FakeDL:
+    def __init__(self, fail=()):
+        self.fail = set(fail)
+
+    def download(self, url, dest_dir, filename):
+        if filename in self.fail:
+            raise DownloadError("HTTP 403")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        p = dest_dir / filename
+        p.write_bytes(b"x" * 2048)
+        return p
+
+
+def _items():
+    week5 = ContentItem("folder", "Week 5", children=[
+        ContentItem("file", "Slides", download_url="https://h/x/slides.pptx"),
+    ])
+    return [
+        ContentItem("file", "Week 1", download_url="https://h/a/w1.pdf?x=1"),
+        ContentItem("file", "Week 2", download_url="https://h/a/w2.pdf"),
+        week5,
+    ]
+
+
+def test_ext_from_url():
+    assert ext_from_url("https://h/a/w1.pdf?x=1") == ".pdf"
+    assert ext_from_url(None) == ""
+
+
+def test_collect_and_find():
+    assert len(collect_downloadable(_items())) == 3
+    assert [i.title for i in find_items(_items(), "week 5")] == ["Week 5"]
+
+
+def test_download_items_reports_each_outcome(tmp_path):
+    dest = tmp_path / "files" / "BTP200"
+    dest.mkdir(parents=True)
+    (dest / "Week 1.pdf").write_bytes(b"old")
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    events = []
+    report = download_items(
+        _items()[:2], "BTP200", dest, _FakeDL(), db,
+        on_event=lambda *e: events.append(e),
+    )
+    assert report.skipped == ["Week 1.pdf"]
+    assert [p.name for p in report.saved] == ["Week 2.pdf"]
+    assert db.get_downloads("BTP200")[0]["filename"] == "Week 2.pdf"
+    assert [e[0] for e in events] == ["skipped", "saved"]
+
+
+def test_download_items_failure_is_reported_not_raised(tmp_path):
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    report = download_items(_items()[1:2], "BTP200", tmp_path / "d",
+                            _FakeDL(fail={"Week 2.pdf"}), db)
+    assert report.failed == [("Week 2.pdf", "HTTP 403")]
+    assert report.saved == []

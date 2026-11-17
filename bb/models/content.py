@@ -73,3 +73,14 @@ def content_tree_from_dict(d: dict) -> ContentTree:
         scraped_at=datetime.fromisoformat(d["scraped_at"]),   # ISO string → datetime
         items=[content_item_from_dict(i) for i in d.get("items", [])],
     )
+
+
+def find_items(items: list[ContentItem], query: str) -> list[ContentItem]:
+    """DFS: every item whose title contains query (case-insensitive), parents before children."""
+    q = query.lower()
+    out: list[ContentItem] = []
+    for item in items:
+        if q in item.title.lower():
+            out.append(item)
+        out.extend(find_items(item.children, query))
+    return out

@@ -6,11 +6,18 @@ No Playwright required — cookies from storage_state JSON work for direct HTTP.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import httpx
 
-from bb.security.session import SessionManager
+from bb.models.content import ContentItem
+from bb.security.session import SessionError, SessionManager
+
+if TYPE_CHECKING:
+    from bb.db import Database
 
 CHUNK_SIZE: int = 65536  # 64 KB read chunks for streaming downloads
 
@@ -78,3 +85,66 @@ class Downloader:
             if not candidate.exists():
                 return candidate
             counter += 1
+
+
+def ext_from_url(url: str | None) -> str:
+    """'https://host/file.pdf?x=1' → '.pdf'; '' when there is no extension."""
+    if not url:
+        return ""
+    path_part = url.split("?")[0].split("/")[-1]
+    return ("." + path_part.rsplit(".", 1)[-1]) if "." in path_part else ""
+
+
+def collect_downloadable(items: list[ContentItem]) -> list[ContentItem]:
+    """DFS: every ContentItem that has a download_url."""
+    result: list[ContentItem] = []
+    for item in items:
+        if item.download_url:
+            result.append(item)
+        result.extend(collect_downloadable(item.children))
+    return result
+
+
+def safe_filename(item: ContentItem) -> str:
+    return item.title.replace("/", "_") + ext_from_url(item.download_url)
+
+
+@dataclass
+class DownloadReport:
+    saved: list[Path] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
+    failed: list[tuple[str, str]] = field(default_factory=list)
+
+
+def download_items(
+    items: list[ContentItem],
+    course_code: str,
+    dest_dir: Path,
+    downloader: Downloader,
+    db: Database,
+    on_event: Callable[[str, str, str], None] | None = None,
+) -> DownloadReport:
+    """Download each item unless a non-empty copy exists; record successes in the DB.
+
+    Failures are collected in the report, never raised, so one bad file can't stop the rest.
+    """
+    report = DownloadReport()
+    emit = on_event or (lambda *_: None)
+    for item in items:
+        filename = safe_filename(item)
+        existing = dest_dir / filename
+        if existing.exists() and existing.stat().st_size > 0:
+            report.skipped.append(filename)
+            emit("skipped", filename, "already downloaded")
+            continue
+        try:
+            saved = downloader.download(item.download_url, dest_dir, filename)
+        except (DownloadError, SessionError) as exc:
+            report.failed.append((filename, str(exc)))
+            emit("failed", filename, str(exc))
+            continue
+        size = saved.stat().st_size
+        db.record_download(course_code, saved.name, str(saved), size)
+        report.saved.append(saved)
+        emit("saved", saved.name, f"{size // 1024} KB")
+    return report

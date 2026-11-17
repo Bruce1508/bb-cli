@@ -20,7 +20,7 @@ import bb.config as _config_module
 from bb.auto_setup import install_auto_sync, uninstall_auto_sync
 from bb.config import BBConfig, NotificationConfig, load_config, save_config
 from bb.db import Database
-from bb.downloader import Downloader, DownloadError
+from bb.downloader import Downloader, collect_downloadable, download_items, ext_from_url
 from bb.notify import dispatch_notify
 from bb.parsers.ical import ICalParseError, parse_ical
 
@@ -1106,34 +1106,6 @@ def cache_clear(
         console.print(f"[green]✔[/green] Cleared cache for {count} course(s).")
 
 
-def _ext_from_url(url: str | None) -> str:
-    """Extract file extension from URL: 'https://host/file.pdf?x=1' → '.pdf'."""
-    if not url:
-        return ""
-    path_part = url.split("?")[0].split("/")[-1]
-    return ("." + path_part.rsplit(".", 1)[-1]) if "." in path_part else ""
-
-
-def _collect_downloadable(items: list) -> list:
-    """DFS: return all ContentItems that have a download_url set."""
-    result = []
-    for item in items:
-        if item.download_url:
-            result.append(item)
-        result.extend(_collect_downloadable(item.children))
-    return result
-
-
-def _find_items_by_title(items: list, query: str) -> list:
-    """DFS: return all ContentItems whose title contains query (case-insensitive)."""
-    result = []
-    for item in items:
-        if query.lower() in item.title.lower():
-            result.append(item)
-        result.extend(_find_items_by_title(item.children, query))
-    return result
-
-
 @app.command()
 def download(
     course_code: str = typer.Argument(..., help="Course code, e.g. BTP200"),
@@ -1145,7 +1117,7 @@ def download(
     """Download course files to ~/.bb/files/<COURSE>/."""
     course_code = _course_arg(course_code) or course_code.upper()
     import bb.cache as cache
-    from bb.security.session import SessionError, SessionManager
+    from bb.security.session import SessionManager
 
     BB_DIR = _config_module.BB_DIR
     tree = cache.load_tree(course_code)
@@ -1156,7 +1128,7 @@ def download(
         )
         raise typer.Exit(1)
 
-    candidates = _collect_downloadable(tree.items)
+    candidates = collect_downloadable(tree.items)
 
     # Require --all or item_name
     if not all_files and not item_name:
@@ -1172,7 +1144,7 @@ def download(
         ft = file_type.lower()
 
         def _type_match(item) -> bool:
-            ext = _ext_from_url(item.download_url).lstrip(".")
+            ext = ext_from_url(item.download_url).lstrip(".")
             if ext == ft:
                 return True
             return bool(item.mime_type and ft in item.mime_type.lower())
@@ -1190,42 +1162,31 @@ def download(
     if dry_run:
         console.print(f"[bold]Would download {len(candidates)} file(s):[/bold]")
         for item in candidates:
-            ext = _ext_from_url(item.download_url)
+            ext = ext_from_url(item.download_url)
             console.print(f"  {item.title}{ext}")
         raise typer.Exit(0)
 
     dest_dir = BB_DIR / "files" / course_code.upper()
     sm = SessionManager(BB_DIR / "session.enc")
     downloader = Downloader(sm)
-    downloaded = skipped = failed = 0
 
     console.print(f"📥 [bold]{course_code.upper()}[/bold] — Downloading files")
 
+    def _show(kind: str, name: str, detail: str) -> None:
+        if kind == "skipped":
+            console.print(f"  [dim]⏩ {name}  {detail}[/dim]")
+        elif kind == "saved":
+            console.print(f"  [green]✔[/green] {name}  {detail}")
+        else:
+            console.print(f"  [yellow]⚠[/yellow]  {name}  {detail}")
+
     with Database(BB_DIR / "bb.db") as db:
         db.setup()
-        for item in candidates:
-            ext = _ext_from_url(item.download_url)
-            filename = item.title.replace("/", "_") + ext
-            dest_check = dest_dir / filename
-
-            if dest_check.exists() and dest_check.stat().st_size > 0:
-                console.print(f"  [dim]⏩ {filename}  already downloaded[/dim]")
-                skipped += 1
-                continue
-
-            try:
-                saved = downloader.download(item.download_url, dest_dir, filename)
-                size = saved.stat().st_size
-                db.record_download(course_code, saved.name, str(saved), size)
-                console.print(f"  [green]✔[/green] {saved.name}  {size // 1024} KB")
-                downloaded += 1
-            except (DownloadError, SessionError) as e:
-                console.print(f"  [yellow]⚠[/yellow]  {filename}  {e}")
-                failed += 1
+        report = download_items(candidates, course_code, dest_dir, downloader, db, on_event=_show)
 
     console.print(
-        f"[green]✔[/green] {downloaded} downloaded, {skipped} skipped, {failed} failed"
-        f"  →  [dim]{dest_dir}[/dim]"
+        f"[green]✔[/green] {len(report.saved)} downloaded, {len(report.skipped)} skipped, "
+        f"{len(report.failed)} failed  →  [dim]{dest_dir}[/dim]"
     )
 
 
@@ -1237,6 +1198,7 @@ def open_item(
     """Open a course item in the browser."""
     course_code = _course_arg(course_code) or course_code.upper()
     import bb.cache as cache
+    from bb.models.content import find_items
 
     tree = cache.load_tree(course_code)
     if tree is None:
@@ -1246,7 +1208,7 @@ def open_item(
         )
         raise typer.Exit(1)
 
-    matches = _find_items_by_title(tree.items, item_name)
+    matches = find_items(tree.items, item_name)
 
     if not matches:
         console.print(f"[yellow]No item matching '[bold]{item_name}[/bold]' found.[/yellow]")
