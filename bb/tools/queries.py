@@ -369,3 +369,30 @@ def get_recent_changes(days: int = 7, course: str | None = None) -> list[dict]:
         }
         for c in rows
     ]
+
+
+def get_briefing() -> dict:
+    """Return a one-shot overview of what matters right now.
+
+    Call this FIRST when the student asks something vague like 'what's up',
+    'what should I do today', 'catch me up', or 'anything I need to know'.
+    Combines deadlines due in the next 48 hours, how many more are due this week,
+    recent changes (moved deadlines, new grades), unread announcements, and the
+    last sync time.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    week = get_upcoming_deadlines(days=7)
+    urgent = [
+        d for d in week
+        if datetime.fromisoformat(d["due_at"]) - now <= timedelta(hours=48)
+    ]
+    status = get_sync_status()
+    return {
+        "urgent_deadlines": urgent,
+        "later_this_week": len(week) - len(urgent),
+        "recent_changes": get_recent_changes(days=2),
+        "unread_announcements": get_announcements(unread=True, limit=5),
+        "last_sync": status.get("last_sync"),
+    }
