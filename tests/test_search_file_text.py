@@ -37,3 +37,32 @@ def test_hit_cap(tmp_path):
     _seed(tmp_path, {f"f{i}.md": "recursion" for i in range(15)})
     with patch("bb.config.BB_DIR", tmp_path):
         assert len(search_file_text("recursion")) == 10
+
+
+def test_snippet_contains_match_after_length_changing_lowercase(tmp_path):
+    _seed(tmp_path, {"a.md": "\u0130" * 300 + " recursion here"})
+    with patch("bb.config.BB_DIR", tmp_path):
+        hits = search_file_text("recursion")
+    assert len(hits) == 1 and "recursion" in hits[0]["snippet"]
+
+
+def test_corrupt_file_is_skipped_good_one_still_hits(tmp_path):
+    import zipfile
+    _seed(tmp_path, {"good.md": "recursion", "bad.docx": "x"})
+    with zipfile.ZipFile(tmp_path / "files" / "BTP200" / "bad.docx", "w") as z:
+        z.writestr("other", "nothing")  # no word/document.xml
+    with patch("bb.config.BB_DIR", tmp_path):
+        hits = search_file_text("recursion")
+    assert [h["filename"] for h in hits] == ["good.md"]
+
+
+def test_ambiguous_course_raises(tmp_path):
+    import pytest
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    db.upsert_course_map("WEB322", "_2", "Web Programming Tools and Frameworks")
+    db.upsert_course_map("WEB422", "_3", "Web Programming for Apps and Services")
+    db.close()
+    with patch("bb.config.BB_DIR", tmp_path):
+        with pytest.raises(ValueError, match="Ambiguous"):
+            search_file_text("x", course="web")
