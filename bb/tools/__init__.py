@@ -24,6 +24,7 @@ from bb.tools.queries import (
     list_downloaded_files,
     read_file_content,
     search_content,
+    search_file_text,
 )
 
 TOOL_REGISTRY: dict[str, object] = {
@@ -35,6 +36,7 @@ TOOL_REGISTRY: dict[str, object] = {
     "get_sync_status": get_sync_status,
     "get_course_content": get_course_content,
     "search_content": search_content,
+    "search_file_text": search_file_text,
     "list_downloaded_files": list_downloaded_files,
     "read_file_content": read_file_content,
     "get_recent_changes": get_recent_changes,

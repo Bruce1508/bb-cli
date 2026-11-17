@@ -133,6 +133,7 @@ _TOOL_LABELS: dict[str, str] = {
     "get_course_content": "Reading course content",
     "search_content": "Searching content",
     "list_downloaded_files": "Listing downloaded files",
+    "search_file_text": "Searching inside files",
     "read_file_content": "Reading file",
     "summarize_content": "Reading file for summary",
     "generate_study_plan": "Gathering study materials",

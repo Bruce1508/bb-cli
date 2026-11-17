@@ -10,6 +10,7 @@ Each function:
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import bb.config as _config_module
 from bb.db import Database
@@ -466,3 +467,42 @@ def get_briefing() -> dict:
         "unread_count": unread_count,
         "last_sync": status.get("last_successful_sync"),
     }
+
+
+_MAX_TEXT_HITS = 10
+
+
+def search_file_text(query: str, course: str | None = None) -> list[dict]:
+    """Search INSIDE downloaded course files (PDF, DOCX, PPTX, TXT, MD) for a word or phrase.
+
+    Use when the student asks where a topic is covered, e.g. 'which lecture talks about
+    recursion' or 'find normalization in my DBS notes'. search_content only matches
+    titles — this matches the text inside files. Returns up to 10 hits with the page
+    number and a short snippet. Only searches files already downloaded; use
+    download_course_file first if the student's files are not downloaded yet.
+    """
+    from bb.text_extract import SUPPORTED, extract_pages
+
+    needle = query.strip().lower()
+    if not needle:
+        return []
+    hits: list[dict] = []
+    for f in list_downloaded_files(course=course):
+        path = Path(f["path"])
+        if path.suffix.lower() not in SUPPORTED or not path.exists():
+            continue
+        try:
+            pages = extract_pages(path)
+        except Exception:
+            continue
+        for page_no, text in enumerate(pages, start=1):
+            idx = text.lower().find(needle)
+            if idx == -1:
+                continue
+            start = max(0, idx - 80)
+            snippet = " ".join(text[start: idx + len(needle) + 80].split())
+            hits.append({"course": f["course"], "filename": f["filename"],
+                         "page": page_no, "snippet": snippet})
+            if len(hits) >= _MAX_TEXT_HITS:
+                return hits
+    return hits
