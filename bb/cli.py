@@ -313,6 +313,7 @@ def due(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON array"),
 ) -> None:
     """Show upcoming deadlines."""
+    course = _course_arg(course)
     if not output_json:
         _warn_if_session_stale()
     BB_DIR = _config_module.BB_DIR
@@ -546,6 +547,13 @@ def sync(
             console.print("[dim]Another bb sync is running — skipped.[/dim]")
             return
         _run_sync(ical_only=ical_only, dry_run=dry_run, refresh_only=refresh_only)
+
+
+def _course_arg(text: str | None) -> str | None:
+    """Resolve a user-typed course ('btp', 'oop') to a course code (lazy import: fast startup)."""
+    from bb.tools.queries import resolve_course
+
+    return resolve_course(text)
 
 
 def _run_sync(ical_only: bool, dry_run: bool, refresh_only: bool) -> None:
@@ -822,6 +830,7 @@ def grades(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON array"),
 ) -> None:
     """Show grades from the database."""
+    course = _course_arg(course)
     if not output_json:
         _warn_if_session_stale()
     BB_DIR = _config_module.BB_DIR
@@ -939,6 +948,7 @@ def changes(
     output_json: bool = typer.Option(False, "--json", help="Output as JSON array"),
 ) -> None:
     """Show what changed on Blackboard (moved deadlines, posted/changed grades)."""
+    course = _course_arg(course)
     BB_DIR = _config_module.BB_DIR
     with Database(BB_DIR / "bb.db") as db:
         db.setup()
@@ -1030,6 +1040,7 @@ def course(
     refresh: bool = typer.Option(False, "--refresh", help="Force re-scrape"),
 ) -> None:
     """Browse course content."""
+    course_code = _course_arg(course_code) or course_code.upper()
     import bb.cache as cache
     from bb.adapters.blackboard_ultra import BlackboardUltraAdapter
     from bb.security.session import SessionManager
@@ -1132,6 +1143,7 @@ def download(
     item_name: str | None = typer.Argument(None, help="Specific item name (substring match)"),
 ) -> None:
     """Download course files to ~/.bb/files/<COURSE>/."""
+    course_code = _course_arg(course_code) or course_code.upper()
     import bb.cache as cache
     from bb.security.session import SessionError, SessionManager
 
@@ -1223,6 +1235,7 @@ def open_item(
     item_name: str = typer.Argument(..., help="Item title (substring match)"),
 ) -> None:
     """Open a course item in the browser."""
+    course_code = _course_arg(course_code) or course_code.upper()
     import bb.cache as cache
 
     tree = cache.load_tree(course_code)

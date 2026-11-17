@@ -27,9 +27,7 @@ def get_upcoming_deadlines(days: int = 14, course: str | None = None) -> list[di
             None to get deadlines for ALL courses. Do NOT pass 'all' — pass None.
     """
     BB_DIR = _config_module.BB_DIR
-    # Normalize LLM-generated sentinel values that mean "no filter"
-    if course and course.lower() in ("all", "any", "*", "none"):
-        course = None
+    course = resolve_course(course)
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
@@ -75,9 +73,7 @@ def get_grades(course: str | None = None) -> list[dict]:
             None to get grades for ALL courses. Do NOT pass 'all' — pass None.
     """
     BB_DIR = _config_module.BB_DIR
-    # Normalize LLM-generated sentinel values that mean "no filter"
-    if course and course.lower() in ("all", "any", "*", "none"):
-        course = None
+    course = resolve_course(course)
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
@@ -123,9 +119,7 @@ def get_announcements(
     """
     BB_DIR = _config_module.BB_DIR
     limit = max(1, min(limit, 30))
-    # Normalize LLM-generated sentinel values that mean "no filter"
-    if course and course.lower() in ("all", "any", "*", "none"):
-        course = None
+    course = resolve_course(course)
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
@@ -168,6 +162,46 @@ def get_course_list() -> list[str]:
         return []
 
     return [r[0] for r in rows]
+
+
+_NO_FILTER = {"", "all", "any", "*", "none", "null"}
+
+
+def _course_names() -> dict[str, str]:
+    """course_code → display_name from course_map ({} if DB missing)."""
+    try:
+        with Database(_config_module.BB_DIR / "bb.db") as db:
+            db.setup()
+            rows = db._conn.execute(
+                "SELECT course_code, display_name FROM course_map"
+            ).fetchall()
+    except Exception:
+        return {}
+    return {r[0]: r[1] for r in rows if r[1]}
+
+
+def resolve_course(text: str | None) -> str | None:
+    """Map loose course text ('btp', 'oop', 'web programming') to a course code.
+
+    None / 'all' / 'any' / '*' / 'none' / '' mean "no filter" → None.
+    Unique match on code substring, then on display name → that code.
+    No match or ambiguous → text.upper(), so filters return nothing rather than everything.
+    """
+    if text is None or text.strip().lower() in _NO_FILTER:
+        return None
+    query = text.strip()
+    upper = query.upper()
+    codes = get_course_list()
+    if upper in codes:
+        return upper
+    hits = [c for c in codes if upper in c.upper()]
+    if len(hits) == 1:
+        return hits[0]
+    hits = [code for code, name in _course_names().items() if query.lower() in name.lower()]
+    if len(hits) == 1:
+        return hits[0]
+    # ponytail: ambiguous input matches nothing; return candidates if students hit this often
+    return upper
 
 
 def get_sync_status() -> dict:
@@ -215,7 +249,7 @@ def get_course_content(course: str) -> dict:
     from bb.cache import load_tree
     from bb.models.content import content_tree_to_dict
 
-    tree = load_tree(course.upper())
+    tree = load_tree(resolve_course(course) or course.upper())
     if tree is None:
         return {}
     return content_tree_to_dict(tree)
@@ -236,6 +270,8 @@ def search_content(query: str, course: str | None = None) -> list[dict]:
     import json
 
     from bb.models.content import content_tree_from_dict
+
+    course = resolve_course(course)
 
     cache_dir = _config_module.BB_DIR / "cache"  # resolved at call time, not import time
     results: list[dict] = []
@@ -290,7 +326,7 @@ def list_downloaded_files(course: str | None = None) -> list[dict]:
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
-            return db.get_downloads(course=course)
+            return db.get_downloads(course=resolve_course(course))
     except Exception:
         return []
 
@@ -311,6 +347,7 @@ def read_file_content(course: str, filename: str) -> dict:
         {"error": "not a PDF"} if file extension is not .pdf
         {"error": "unreadable: <reason>"} if pdfplumber fails
     """
+    course = resolve_course(course) or course.upper()
     BB_DIR = _config_module.BB_DIR
     files_dir = BB_DIR / "files" / course.upper()
     if not files_dir.exists():
@@ -354,8 +391,7 @@ def get_recent_changes(days: int = 7, course: str | None = None) -> list[dict]:
             all courses. Do NOT pass 'all' — pass None.
     """
     BB_DIR = _config_module.BB_DIR
-    if course and course.lower() in ("all", "any", "*", "none"):
-        course = None
+    course = resolve_course(course)
     try:
         with Database(BB_DIR / "bb.db") as db:
             db.setup()
