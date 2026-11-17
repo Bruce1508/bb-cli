@@ -11,11 +11,7 @@ Success criteria:
 - ntfy.notify(): silent no-op when topic is empty string
 - ntfy.notify(): swallows all exceptions (httpx.ConnectError, OSError, etc.) — never raises
 - ntfy.notify(): returns None
-- dispatch_notify("terminal", ...): routes to terminal.notify(title, body)
-- dispatch_notify("ntfy", ...): routes to ntfy.notify(topic, title, body)
-- dispatch_notify("telegram", ...): silent no-op (not yet implemented)
-- dispatch_notify("discord", ...): silent no-op
-- dispatch_notify(unknown_provider, ...): silent no-op
+- dispatch_notify(cfg, ...): routes to the provider named in cfg.provider
 """
 from unittest.mock import MagicMock, call, patch
 
@@ -111,81 +107,53 @@ def test_ntfy_notify_returns_none():
 
 
 # ---------------------------------------------------------------------------
-# dispatch_notify — routing
+# dispatch_notify — routing (takes the whole NotificationConfig)
 # ---------------------------------------------------------------------------
+
+from bb.config import NotificationConfig  # noqa: E402
+
+
+def _cfg(**kw) -> NotificationConfig:
+    return NotificationConfig(**kw)
 
 
 def test_dispatch_notify_terminal_calls_terminal_notify():
     with patch("bb.notify.terminal.notify") as mock_terminal:
-        dispatch_notify("terminal", "bb", "3 deadlines synced")
+        dispatch_notify(_cfg(provider="terminal"), "bb", "3 deadlines synced")
     mock_terminal.assert_called_once_with("bb", "3 deadlines synced")
 
 
-def test_dispatch_notify_ntfy_calls_ntfy_notify():
+def test_dispatch_notify_ntfy_passes_topic_and_priority():
     with patch("bb.notify.ntfy.notify") as mock_ntfy:
-        dispatch_notify("ntfy", "bb", "3 deadlines synced", ntfy_topic="my-bb")
-    mock_ntfy.assert_called_once()
+        dispatch_notify(_cfg(provider="ntfy", ntfy_topic="t"), "T", "B", priority="high")
+    mock_ntfy.assert_called_once_with("t", "T", "B", "high")
 
 
-def test_dispatch_notify_ntfy_passes_topic():
-    with patch("bb.notify.ntfy.notify") as mock_ntfy:
-        dispatch_notify("ntfy", "My Title", "body text", ntfy_topic="test-topic")
-    args = mock_ntfy.call_args[0]
-    assert "test-topic" in args
+def test_dispatch_notify_telegram_passes_credentials():
+    with patch("bb.notify.telegram.notify") as mock_tg:
+        dispatch_notify(
+            _cfg(provider="telegram", telegram_token="tok", telegram_chat_id="42"), "T", "B"
+        )
+    mock_tg.assert_called_once_with("tok", "42", "T", "B", "default")
 
 
-def test_dispatch_notify_ntfy_passes_title_and_body():
-    with patch("bb.notify.ntfy.notify") as mock_ntfy:
-        dispatch_notify("ntfy", "My Title", "My Body", ntfy_topic="t")
-    args = mock_ntfy.call_args[0]
-    assert "My Title" in args
-    assert "My Body" in args
+def test_dispatch_notify_discord_passes_webhook():
+    with patch("bb.notify.discord.notify") as mock_dc:
+        dispatch_notify(
+            _cfg(provider="discord", discord_webhook="https://d/hook"), "T", "B", priority="urgent"
+        )
+    mock_dc.assert_called_once_with("https://d/hook", "T", "B", "urgent")
 
 
-def test_dispatch_notify_terminal_does_not_call_ntfy():
-    with (
-        patch("bb.notify.terminal.notify"),
-        patch("bb.notify.ntfy.notify") as mock_ntfy,
-    ):
-        dispatch_notify("terminal", "title", "body")
-    mock_ntfy.assert_not_called()
-
-
-def test_dispatch_notify_ntfy_does_not_call_terminal():
-    with (
-        patch("bb.notify.terminal.notify") as mock_terminal,
-        patch("bb.notify.ntfy.notify"),
-    ):
-        dispatch_notify("ntfy", "title", "body", ntfy_topic="t")
-    mock_terminal.assert_not_called()
-
-
-def test_dispatch_notify_telegram_is_silent_noop():
-    """telegram is not yet implemented — must not raise."""
+def test_dispatch_notify_only_calls_selected_provider():
     with (
         patch("bb.notify.terminal.notify") as mock_terminal,
         patch("bb.notify.ntfy.notify") as mock_ntfy,
+        patch("bb.notify.telegram.notify") as mock_tg,
+        patch("bb.notify.discord.notify") as mock_dc,
     ):
-        dispatch_notify("telegram", "title", "body")
+        dispatch_notify(_cfg(provider="telegram"), "T", "B")
+    mock_tg.assert_called_once()
     mock_terminal.assert_not_called()
     mock_ntfy.assert_not_called()
-
-
-def test_dispatch_notify_discord_is_silent_noop():
-    with (
-        patch("bb.notify.terminal.notify") as mock_terminal,
-        patch("bb.notify.ntfy.notify") as mock_ntfy,
-    ):
-        dispatch_notify("discord", "title", "body")
-    mock_terminal.assert_not_called()
-    mock_ntfy.assert_not_called()
-
-
-def test_dispatch_notify_unknown_provider_is_silent_noop():
-    with (
-        patch("bb.notify.terminal.notify") as mock_terminal,
-        patch("bb.notify.ntfy.notify") as mock_ntfy,
-    ):
-        dispatch_notify("carrier_pigeon", "title", "body")
-    mock_terminal.assert_not_called()
-    mock_ntfy.assert_not_called()
+    mock_dc.assert_not_called()

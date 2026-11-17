@@ -18,6 +18,7 @@ RULES:
 - If a tool returns an empty list [], say there is nothing.
 - Each deadline result includes a "when" field (e.g. "due in 1h", "due in 5 days") —
   use this field for timing, not the raw UTC timestamp.
+- Grade weights are unknown. Never calculate a required exam score or a final course grade.
 - Be concise. Summarize results in 3-6 bullet points max. Do not dump every item.
   Highlight what is most urgent or relevant. If there are many items, group by course.
 - If data seems stale, suggest running `bb sync`

@@ -774,3 +774,41 @@ def test_history_trimmed_to_50_messages(monkeypatch, tmp_path):
     assert saved[0]["content"] != "q0"
     # Newest pair should be last
     assert saved[-1] == {"role": "assistant", "content": "new answer"}
+
+
+def test_no_provider_help_never_suggests_unsupported_provider(monkeypatch, tmp_path):
+    """Following the help text must not produce a config that load_config() rejects."""
+    import io
+
+    from rich.console import Console
+
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.ai.providers.ollama.is_available", lambda: False)
+    from bb.ai.chat import run_chat
+    from bb.config import BBConfig
+
+    buf = io.StringIO()
+    run_chat(query="hi", cfg=BBConfig(), console=Console(file=buf, width=200))
+    out = buf.getvalue()
+    assert "ollama pull" in out
+    assert 'provider = "claude"' not in out
+    assert "api_key" not in out
+
+
+def test_every_tool_has_a_label():
+    from bb.ai.chat import _TOOL_LABELS
+    from bb.tools import TOOL_REGISTRY
+    assert set(TOOL_REGISTRY) <= set(_TOOL_LABELS)
+
+
+def test_estimate_study_time_does_not_promise_final_exam_math():
+    from bb.ai.chat import _tool_description
+    from bb.tools.ai_tools import estimate_study_time
+    desc = _tool_description(estimate_study_time)
+    assert "need on the final" not in desc
+    assert "weights are NOT available" in desc
+
+
+def test_system_prompt_forbids_grade_weight_math():
+    from bb.ai.prompts import SYSTEM_PROMPT
+    assert "weights are unknown" in SYSTEM_PROMPT

@@ -13,7 +13,13 @@ def notify(title: str, body: str) -> None:
     try:
         if sys.platform == "darwin":
             subprocess.run(
-                ["osascript", "-e", f'display notification "{body}" with title "{title}"'],
+                [
+                    "osascript",
+                    "-e", "on run argv",
+                    "-e", "display notification (item 2 of argv) with title (item 1 of argv)",
+                    "-e", "end run",
+                    "--", title, body,
+                ],
                 check=False,
             )
         elif sys.platform.startswith("linux"):

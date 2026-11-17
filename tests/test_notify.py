@@ -32,15 +32,13 @@ def test_macos_calls_osascript():
 def test_macos_command_contains_title():
     with patch("sys.platform", "darwin"), patch("subprocess.run") as mock_run:
         notify("My Title", "Some body")
-    script = mock_run.call_args[0][0][2]
-    assert "My Title" in script
+    assert "My Title" in mock_run.call_args[0][0]
 
 
 def test_macos_command_contains_body():
     with patch("sys.platform", "darwin"), patch("subprocess.run") as mock_run:
         notify("My Title", "Some body text")
-    script = mock_run.call_args[0][0][2]
-    assert "Some body text" in script
+    assert "Some body text" in mock_run.call_args[0][0]
 
 
 def test_macos_uses_check_false():
@@ -125,3 +123,13 @@ def test_notify_returns_none():
     with patch("sys.platform", "darwin"), patch("subprocess.run"):
         result = notify("bb", "body")
     assert result is None
+
+
+def test_macos_title_and_body_passed_as_argv_not_in_script():
+    title, body = '" & do shell script "x', 'b"ody'
+    with patch("sys.platform", "darwin"), patch("subprocess.run") as mock_run:
+        notify(title, body)
+    args = mock_run.call_args[0][0]
+    script = " ".join(args[i + 1] for i, a in enumerate(args) if a == "-e")
+    assert title not in script and body not in script
+    assert args[-2:] == [title, body]

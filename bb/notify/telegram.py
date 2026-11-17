@@ -11,7 +11,7 @@ def notify(token: str, chat_id: str, title: str, body: str, priority: str = "def
     Args:
         token: Telegram Bot API token (e.g. "123456:ABC-DEF...").
         chat_id: Telegram chat or user ID to send to.
-        title: Notification title shown in bold.
+        title: Notification title (first line).
         body: Notification body text.
         priority: One of "min", "low", "default", "high", "urgent".
             "high" and "urgent" prefix the title with a red circle indicator.
@@ -23,11 +23,7 @@ def notify(token: str, chat_id: str, title: str, body: str, priority: str = "def
             title = f"🔴 {title}"
         httpx.post(
             f"https://api.telegram.org/bot{token}/sendMessage",
-            json={
-                "chat_id": chat_id,
-                "text": f"**{title}**\n{body}",
-                "parse_mode": "Markdown",
-            },
+            json={"chat_id": chat_id, "text": f"{title}\n{body}"},
             timeout=10,
         )
     except Exception:

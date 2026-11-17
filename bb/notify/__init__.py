@@ -1,20 +1,35 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+from bb.notify import discord as _discord
 from bb.notify import ntfy as _ntfy
+from bb.notify import telegram as _telegram
 from bb.notify import terminal as _terminal
 
+if TYPE_CHECKING:
+    from bb.config import NotificationConfig
 
-def dispatch_notify(provider: str, title: str, body: str, ntfy_topic: str = "") -> None:
-    """Route a notification to the configured provider.
+
+def dispatch_notify(
+    ncfg: NotificationConfig, title: str, body: str, priority: str = "default"
+) -> None:
+    """Send one notification through the provider configured in `ncfg`.
+
+    Never raises — every provider swallows its own network errors.
 
     Args:
-        provider: One of "terminal", "ntfy". Unknown values are silently ignored.
+        ncfg: The [notification] section of the user's config.
         title: Short notification title.
         body: Notification body text.
-        ntfy_topic: Required when provider is "ntfy"; silently skipped if empty.
+        priority: "min" | "low" | "default" | "high" | "urgent". Terminal ignores it.
     """
+    provider = ncfg.provider
     if provider == "terminal":
         _terminal.notify(title, body)
     elif provider == "ntfy":
-        _ntfy.notify(ntfy_topic, title, body)
-    # telegram / discord: not yet implemented — silent no-op
+        _ntfy.notify(ncfg.ntfy_topic, title, body, priority)
+    elif provider == "telegram":
+        _telegram.notify(ncfg.telegram_token, ncfg.telegram_chat_id, title, body, priority)
+    elif provider == "discord":
+        _discord.notify(ncfg.discord_webhook, title, body, priority)

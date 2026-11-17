@@ -176,6 +176,7 @@ class BlackboardUltraAdapter(LMSAdapter):
         Raises SessionError if the session file is missing or corrupt.
         """
         import re as _re_local
+
         import httpx
 
         state = self._sm.decrypt_session()  # raises SessionError if missing/corrupt
@@ -186,7 +187,9 @@ class BlackboardUltraAdapter(LMSAdapter):
 
         with httpx.Client(cookies=cookies, follow_redirects=True, timeout=20) as client:
             # Step 1: get all enrolled courses
-            resp = client.get(f"{base}/learn/api/public/v1/users/me/courses?expand=course&limit=100")
+            resp = client.get(
+                f"{base}/learn/api/public/v1/users/me/courses?expand=course&limit=100"
+            )
             if resp.status_code != 200:
                 return announcements
             memberships = resp.json().get("results", [])
@@ -250,7 +253,6 @@ class BlackboardUltraAdapter(LMSAdapter):
 
         Raises SessionError if the session file is missing or corrupt.
         """
-        import re as _re_local
         import httpx
 
         # Internal BB document-body nodes — not user-visible content items

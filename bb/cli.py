@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 import webbrowser
@@ -10,11 +11,12 @@ from typing import Optional
 import httpx
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 import bb.config as _config_module
 from bb.auto_setup import install_auto_sync, uninstall_auto_sync
-from bb.config import BBConfig, NotificationConfig, load_config, save_config
+from bb.config import NotificationConfig, load_config, save_config
 from bb.db import Database
 from bb.downloader import Downloader, DownloadError
 from bb.notify import dispatch_notify
@@ -31,9 +33,13 @@ def _warn_if_session_stale() -> None:
     sm = SessionManager(BB_DIR / "session.enc")
     age = sm.check_session_age()
     if age == "expired":
-        console.print("[yellow]⚠ Session may be expired — run [bold]bb auth[/bold] for fresh data.[/yellow]")
+        console.print(
+            "[yellow]⚠ Session may be expired — run [bold]bb auth[/bold] for fresh data.[/yellow]"
+        )
     elif age == "uncertain":
-        console.print("[dim]⚠ Session age uncertain — data may be stale. Run bb sync to refresh.[/dim]")
+        console.print(
+            "[dim]⚠ Session age uncertain — data may be stale. Run bb sync to refresh.[/dim]"
+        )
 
 
 _CHANGE_COOLDOWN_HOURS = 6
@@ -50,7 +56,7 @@ def _render_change_digest(changes: list) -> str:
     return f"⟳ {n} change{'s' if n != 1 else ''}: {humanize(changes)}"
 
 
-def _notify_changes(db, changes, provider, ntfy_topic) -> None:
+def _notify_changes(db, changes, ncfg) -> None:
     """Fire one deduped notification per changed item+field (6h cooldown)."""
     from bb.changes import humanize
 
@@ -60,7 +66,7 @@ def _notify_changes(db, changes, provider, ntfy_topic) -> None:
         key = f"change:{ch.item_id}:{ch.field}"
         if db.was_notified_recently(key, within_hours=_CHANGE_COOLDOWN_HOURS):
             continue
-        dispatch_notify(provider, "bb", humanize([ch]), ntfy_topic)
+        dispatch_notify(ncfg, "bb", humanize([ch]), priority="high")
         db.log_notification(key)
 
 
@@ -77,11 +83,53 @@ _LMS_OPTIONS: dict[int, tuple[str, str]] = {
     1: ("blackboard_ultra", "Blackboard Ultra"),
 }
 _NOTIFY_OPTIONS: dict[int, tuple[str, str]] = {
-    1: ("terminal", "Terminal (macOS/Linux native)"),
-    2: ("ntfy", "ntfy.sh  [coming soon]"),
-    3: ("telegram", "Telegram  [coming soon]"),
-    4: ("discord", "Discord  [coming soon]"),
+    1: ("terminal", "Desktop notification (this computer only)"),
+    2: ("ntfy", "ntfy.sh — phone push, no account needed (recommended)"),
+    3: ("telegram", "Telegram bot"),
+    4: ("discord", "Discord webhook"),
 }
+
+
+def _prompt_notification_details(
+    current: NotificationConfig, provider: str
+) -> NotificationConfig:
+    """Ask only for the credentials the chosen provider needs; keep everything else."""
+    import secrets
+
+    n = current.model_copy(update={"provider": provider})
+    keep_hint = "[dim](press Enter to keep the saved one)[/dim]"
+    if provider == "ntfy":
+        default_topic = n.ntfy_topic or f"bb-{secrets.token_hex(4)}"
+        while True:
+            topic = typer.prompt(
+                "ntfy topic (anyone who knows it can read it)", default=default_topic
+            ).strip()
+            if re.fullmatch(r"[-_A-Za-z0-9]{1,64}", topic):
+                break
+            console.print("[red]Use 1-64 letters, digits, '-' or '_' only.[/red]")
+        n = n.model_copy(update={"ntfy_topic": topic})
+        console.print(f"[dim]  Install the ntfy app and subscribe to: {escape(topic)}[/dim]")
+    elif provider == "telegram":
+        if n.telegram_token:
+            console.print(keep_hint)
+        token = typer.prompt(
+            "Telegram bot token (from @BotFather)",
+            default=n.telegram_token or None,
+            hide_input=True,
+            show_default=False,
+        )
+        chat_id = typer.prompt("Telegram chat id", default=n.telegram_chat_id or None)
+        n = n.model_copy(
+            update={"telegram_token": token.strip(), "telegram_chat_id": chat_id.strip()}
+        )
+    elif provider == "discord":
+        if n.discord_webhook:
+            console.print(keep_hint)
+        hook = typer.prompt(
+            "Discord webhook URL", default=n.discord_webhook or None, show_default=False
+        )
+        n = n.model_copy(update={"discord_webhook": hook.strip()})
+    return n
 
 
 @app.command()
@@ -103,8 +151,12 @@ def init() -> None:
     console.print("\n[bold]Notification method:[/bold]")
     for k, (_, label) in _NOTIFY_OPTIONS.items():
         console.print(f"  ({k}) {label}")
-    notify_choice = typer.prompt("Select", default=1, type=int)
+    saved_choice = next(
+        (k for k, (p, _) in _NOTIFY_OPTIONS.items() if p == existing.notification.provider), 1
+    )
+    notify_choice = typer.prompt("Select", default=saved_choice, type=int)
     notify_provider = _NOTIFY_OPTIONS.get(notify_choice, _NOTIFY_OPTIONS[1])[0]
+    notification = _prompt_notification_details(existing.notification, notify_provider)
 
     # --- iCal feed URL ---
     console.print(
@@ -116,16 +168,15 @@ def init() -> None:
     ical_url = typer.prompt("iCal URL (leave blank to skip)", default=existing.ical_url or "")
     ical_url = ical_url.strip() or None
 
-    # --- Save config ---
+    # --- Save config (update the existing one — never drop [ai] or tokens) ---
     BB_DIR = _config_module.BB_DIR
     bb_dir_existed = BB_DIR.exists()
-    cfg = BBConfig(
-        lms_type=lms_type,  # type: ignore[arg-type]
-        lms_url=lms_url,
-        ical_url=ical_url,
-        notification=NotificationConfig(provider=notify_provider),  # type: ignore[arg-type]
-        sync_interval_hours=existing.sync_interval_hours,
-    )
+    cfg = existing.model_copy(update={
+        "lms_type": lms_type,
+        "lms_url": lms_url,
+        "ical_url": ical_url,
+        "notification": notification,
+    })
     save_config(cfg)
     if not bb_dir_existed:
         console.print(f"\n[green]✔[/green] Created {BB_DIR}")
@@ -192,7 +243,7 @@ def import_ical(
     if new_count > 0:
         label = f"{new_count} new deadline{'s' if new_count != 1 else ''} synced"
         cfg2 = load_config()
-        dispatch_notify(cfg2.notification.provider, "bb", label, cfg2.notification.ntfy_topic)
+        dispatch_notify(cfg2.notification, "bb", label)
         console.print(f"[blue]🔔[/blue] {label}")
 
 
@@ -385,7 +436,14 @@ def sync(
     """Sync deadlines, announcements, and grades from Blackboard."""
     from bb.adapters.blackboard_ultra import BlackboardUltraAdapter
     from bb.security.session import SessionError, SessionManager
-    from bb.sync import preflight_session, sync_announcements, sync_content_additions, sync_grades, sync_ical, sync_stream
+    from bb.sync import (
+        preflight_session,
+        sync_announcements,
+        sync_content_additions,
+        sync_grades,
+        sync_ical,
+        sync_stream,
+    )
 
     cfg = load_config()
     BB_DIR = _config_module.BB_DIR
@@ -410,10 +468,10 @@ def sync(
                 db.log_sync("preflight", 0, 0, error="session_dead")
                 # No cooldown — probe failures need immediate user action
                 dispatch_notify(
-                    cfg.notification.provider,
+                    cfg.notification,
                     "bb — Session Expired",
                     "Run `bb auth` to re-authenticate.",
-                    cfg.notification.ntfy_topic,
+                    priority="high",
                 )
                 db.log_notification("session_expired_probe")
             raise typer.Exit(code=1)
@@ -435,7 +493,10 @@ def sync(
                 db.setup()
                 for c in course_list:
                     db.upsert_course_map(c["code"], c["bb_id"], c["name"])
-            console.print(f"[green]✔[/green] {len(course_list)} courses mapped [{time.monotonic()-_t0:.1f}s]")
+            console.print(
+                f"[green]✔[/green] {len(course_list)} courses mapped "
+                f"[{time.monotonic()-_t0:.1f}s]"
+            )
         except Exception as exc:
             console.print(f"[yellow]⚠[/yellow] Course discovery failed: {exc} (sync continues)")
 
@@ -464,7 +525,10 @@ def sync(
                 new, updated = sync_ical(cfg.ical_url, db)
                 db.log_sync("ical", new, updated)
             total_new += new
-            console.print(f"[green]✔[/green] {new + updated} deadlines ({new} new) [{time.monotonic()-_t1:.1f}s]")
+            console.print(
+                f"[green]✔[/green] {new + updated} deadlines ({new} new) "
+                f"[{time.monotonic()-_t1:.1f}s]"
+            )
         except Exception as exc:
             console.print(f"[yellow]⚠[/yellow] iCal sync failed: {exc}")
             with Database(db_path) as db:
@@ -489,7 +553,8 @@ def sync(
             db.log_sync("stream", stream_new, 0)
         total_new += stream_new
         console.print(
-            f"[green]✔[/green] {d_new} deadlines, {a_new} announcements, {g_new} grades new [{time.monotonic()-_t2:.1f}s]"
+            f"[green]✔[/green] {d_new} deadlines, {a_new} announcements, {g_new} grades new "
+            f"[{time.monotonic()-_t2:.1f}s]"
         )
     except SessionError:
         console.print(
@@ -501,10 +566,10 @@ def sync(
             db.log_sync("stream", 0, 0, error="session_expired")
             if not db.was_notified_recently("session_expired", within_hours=24):
                 dispatch_notify(
-                    cfg.notification.provider,
+                    cfg.notification,
                     "bb — Session Expired",
                     "Run `bb auth` to re-authenticate.",
-                    cfg.notification.ntfy_topic,
+                    priority="high",
                 )
                 db.log_notification("session_expired")
     except Exception as exc:
@@ -525,7 +590,10 @@ def sync(
                 g_new3 = sync_grades(adapter3, db)
                 db.log_sync("grades", g_new3, 0)
             total_new += g_new3
-            console.print(f"[green]✔[/green] {g_new3} grades new from grades page [{time.monotonic()-_t3:.1f}s]")
+            console.print(
+                f"[green]✔[/green] {g_new3} grades new from grades page "
+                f"[{time.monotonic()-_t3:.1f}s]"
+            )
         except SessionError:
             console.print("[yellow]⚠[/yellow] Session expired — run [bold]bb auth[/bold].")
         except Exception as exc:
@@ -559,7 +627,9 @@ def sync(
             c_new5 = sync_content_additions(adapter5, db)
             db.log_sync("content", c_new5, 0)
         total_new += c_new5
-        console.print(f"[green]✔[/green] {c_new5} content additions new [{time.monotonic()-_t5:.1f}s]")
+        console.print(
+            f"[green]✔[/green] {c_new5} content additions new [{time.monotonic()-_t5:.1f}s]"
+        )
     except SessionError:
         console.print("[yellow]⚠[/yellow] Session expired — run [bold]bb auth[/bold].")
     except Exception as exc:
@@ -572,12 +642,12 @@ def sync(
         digest = _render_change_digest(changes)
         if digest:
             console.print(f"[cyan]{digest}[/cyan]")
-            _notify_changes(db, changes, cfg.notification.provider, cfg.notification.ntfy_topic)
+            _notify_changes(db, changes, cfg.notification)
 
     # --- Notify ---
     if total_new > 0:
         label = f"{total_new} new item{'s' if total_new != 1 else ''} synced"
-        dispatch_notify(cfg.notification.provider, "bb", label, cfg.notification.ntfy_topic)
+        dispatch_notify(cfg.notification, "bb", label)
         console.print(f"[blue]🔔[/blue] {label}")
 
 
@@ -692,36 +762,38 @@ def ann(
     BB_DIR = _config_module.BB_DIR
     with Database(BB_DIR / "bb.db") as db:
         db.setup()
-        announcements = db.get_recent_announcements(limit=limit)
+        announcements = db.get_recent_announcements(limit=limit, unread_only=unread)
 
-    if unread:
-        announcements = [a for a in announcements if a.read_at is None]
+        if not announcements:
+            msg = "No unread announcements." if unread else "No announcements found."
+            console.print(msg)
+            return
 
-    if not announcements:
-        msg = "No unread announcements." if unread else "No announcements found."
-        console.print(msg)
-        return
+        table = Table(show_header=True, header_style="bold")
+        table.add_column("Course", style="cyan", min_width=8)
+        table.add_column("Announcement", min_width=30)
+        table.add_column("Posted", min_width=10)
 
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("Course", style="cyan", min_width=8)
-    table.add_column("Announcement", min_width=30)
-    table.add_column("Posted", min_width=10)
+        now = datetime.now(timezone.utc)
+        for a in announcements:
+            delta = now - a.posted_at
+            if delta.total_seconds() < 3600:
+                posted_str = f"{int(delta.total_seconds() / 60)}m ago"
+            elif delta.total_seconds() < 86400:
+                posted_str = f"{int(delta.total_seconds() / 3600)}h ago"
+            else:
+                posted_str = f"{delta.days}d ago"
 
-    now = datetime.now(timezone.utc)
-    for a in announcements:
-        delta = now - a.posted_at
-        if delta.total_seconds() < 3600:
-            posted_str = f"{int(delta.total_seconds() / 60)}m ago"
-        elif delta.total_seconds() < 86400:
-            posted_str = f"{int(delta.total_seconds() / 3600)}h ago"
-        else:
-            posted_str = f"{delta.days}d ago"
+            title = escape(a.title)
+            title_str = f"[bold]{title}[/bold]" if a.read_at is None else title
+            if a.body:
+                preview = escape(a.body[:120] + ("…" if len(a.body) > 120 else ""))
+                title_str += f"\n[dim]{preview}[/dim]"
+            table.add_row(a.course, title_str, posted_str)
 
-        # Unread announcements shown in bold
-        title_str = f"[bold]{a.title}[/bold]" if a.read_at is None else a.title
-        table.add_row(a.course, title_str, posted_str)
-
-    console.print(table)
+        console.print(table)
+        # Listing an announcement in `bb ann` counts as reading it.
+        db.mark_announcements_read([a.id for a in announcements if a.read_at is None])
 
 
 @app.command()
@@ -1067,3 +1139,7 @@ def setup_browsers() -> None:
     result = subprocess.run(["playwright", "install", "chromium"], check=False)
     if result.returncode != 0:
         raise typer.Exit(1)
+
+
+if __name__ == "__main__":
+    app()

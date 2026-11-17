@@ -356,3 +356,44 @@ def test_get_recent_announcements_returns_latest_first():
         results = db.get_recent_announcements(limit=10)
         ids = [a.id for a in results]
         assert ids.index("ann-new") < ids.index("ann-old")
+
+
+def _ann(i: int, read: bool = False, course: str = "BTP200"):
+    from datetime import datetime, timezone
+
+    from bb.adapters.base import Announcement
+    return Announcement(
+        id=f"a{i}", course=course, title=f"T{i}", body=f"Body {i}",
+        posted_at=datetime(2026, 11, i + 1, tzinfo=timezone.utc),
+        read_at=datetime(2026, 11, 20, tzinfo=timezone.utc) if read else None,
+    )
+
+
+def test_unread_filter_applies_before_limit(tmp_path):
+    from bb.db import Database
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    db.upsert_announcement(_ann(0))                  # oldest, unread
+    for i in range(1, 5):
+        db.upsert_announcement(_ann(i, read=True))   # 4 newer, all read
+    out = db.get_recent_announcements(limit=2, unread_only=True)
+    assert [a.id for a in out] == ["a0"]
+
+
+def test_mark_announcements_read_survives_reupsert(tmp_path):
+    from bb.db import Database
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    db.upsert_announcement(_ann(1))
+    db.mark_announcements_read(["a1"])
+    db.upsert_announcement(_ann(1))  # next sync sees it again
+    assert db.get_recent_announcements(unread_only=True) == []
+
+
+def test_get_recent_announcements_course_filter(tmp_path):
+    from bb.db import Database
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    db.upsert_announcement(_ann(1, course="BTP200"))
+    db.upsert_announcement(_ann(2, course="WEB322"))
+    assert [a.id for a in db.get_recent_announcements(course="web322")] == ["a2"]

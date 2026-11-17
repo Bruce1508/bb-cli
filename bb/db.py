@@ -248,12 +248,22 @@ class Database:
             for r in rows
         ]
 
-    def get_recent_announcements(self, limit: int = 20) -> list[Announcement]:
-        """Return the most recent announcements, newest first."""
+    def get_recent_announcements(
+        self, limit: int = 20, unread_only: bool = False, course: str | None = None
+    ) -> list[Announcement]:
+        """Return the most recent announcements, newest first. Filters run before LIMIT."""
+        clauses: list[str] = []
+        params: list[object] = []
+        if unread_only:
+            clauses.append("read_at IS NULL")
+        if course:
+            clauses.append("UPPER(course) = UPPER(?)")
+            params.append(course)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
         rows = self._conn.execute(
             "SELECT id, course, title, body, posted_at, read_at FROM announcements"
-            " ORDER BY posted_at DESC LIMIT ?",
-            (limit,),
+            f"{where} ORDER BY posted_at DESC LIMIT ?",
+            (*params, limit),
         ).fetchall()
         return [
             Announcement(
@@ -266,6 +276,17 @@ class Database:
             )
             for r in rows
         ]
+
+    def mark_announcements_read(self, ids: list[str]) -> None:
+        """Set read_at=now on the given announcements (already-read rows keep their time)."""
+        if not ids:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        self._conn.executemany(
+            "UPDATE announcements SET read_at=? WHERE id=? AND read_at IS NULL",
+            [(now, i) for i in ids],
+        )
+        self._conn.commit()
 
     # ------------------------------------------------------------------
     # Sync log

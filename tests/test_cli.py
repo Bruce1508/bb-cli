@@ -196,3 +196,109 @@ def test_init_output_mentions_database_initialized(tmp_path):
     result = _invoke_init(tmp_path)
     output_lower = result.output.lower()
     assert "database" in output_lower or "bb.db" in output_lower
+
+
+def test_cli_module_is_runnable_with_python_m():
+    """Chat /sync shells out to `python -m bb.cli`; without a __main__ guard it silently no-ops."""
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "bb.cli", "version"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "bb-cli" in result.stdout
+
+
+def test_init_preserves_ai_settings(tmp_path):
+    (tmp_path / "config.toml").write_text('[ai]\nmodel = "qwen3:8b"\nthink = true\n')
+    result = _invoke_init(tmp_path)
+    assert result.exit_code == 0, result.output
+    with patch("bb.config.BB_DIR", tmp_path):
+        from bb.config import load_config
+        cfg = load_config()
+    assert cfg.ai.model == "qwen3:8b"
+    assert cfg.ai.think is True
+
+
+def test_init_ntfy_asks_for_topic(tmp_path):
+    # LMS type, URL, notify=2 (ntfy), topic, iCal blank
+    result = _invoke_init(tmp_path, inputs="\n\n2\nmy-bb-topic\n\n")
+    assert result.exit_code == 0, result.output
+    with patch("bb.config.BB_DIR", tmp_path):
+        from bb.config import load_config
+        cfg = load_config()
+    assert cfg.notification.provider == "ntfy"
+    assert cfg.notification.ntfy_topic == "my-bb-topic"
+
+
+def test_init_telegram_asks_for_token_and_chat_id(tmp_path):
+    result = _invoke_init(tmp_path, inputs="\n\n3\n123:ABC\n987\n\n")
+    assert result.exit_code == 0, result.output
+    with patch("bb.config.BB_DIR", tmp_path):
+        from bb.config import load_config
+        cfg = load_config()
+    assert cfg.notification.provider == "telegram"
+    assert cfg.notification.telegram_token == "123:ABC"
+    assert cfg.notification.telegram_chat_id == "987"
+
+
+def test_init_menu_shows_working_push_providers(tmp_path):
+    result = _invoke_init(tmp_path)
+    assert "phone push" in result.output
+    assert "Telegram bot" in result.output
+    assert "Discord webhook" in result.output
+
+
+def _seed_telegram(tmp_path):
+    (tmp_path / "config.toml").write_text(
+        '[notification]\nprovider = "telegram"\n'
+        'telegram_token = "123:SECRET"\ntelegram_chat_id = "987"\n'
+    )
+
+
+def _load(tmp_path):
+    with patch("bb.config.BB_DIR", tmp_path):
+        from bb.config import load_config
+
+        return load_config()
+
+
+def test_init_does_not_echo_saved_telegram_token(tmp_path):
+    _seed_telegram(tmp_path)
+    result = _invoke_init(tmp_path, inputs="\n\n3\n\n\n\n")
+    assert result.exit_code == 0, result.output
+    assert _load(tmp_path).notification.telegram_token == "123:SECRET"
+    assert "123:SECRET" not in result.output
+
+
+def test_init_does_not_echo_saved_discord_webhook(tmp_path):
+    (tmp_path / "config.toml").write_text(
+        '[notification]\nprovider = "discord"\ndiscord_webhook = "https://d.example/SECRETHOOK"\n'
+    )
+    result = _invoke_init(tmp_path, inputs="\n\n4\n\n\n")
+    assert result.exit_code == 0, result.output
+    assert _load(tmp_path).notification.discord_webhook == "https://d.example/SECRETHOOK"
+    assert "SECRETHOOK" not in result.output
+
+
+def test_init_enter_keeps_saved_provider(tmp_path):
+    _seed_telegram(tmp_path)
+    result = _invoke_init(tmp_path, inputs="\n" * 6)
+    assert result.exit_code == 0, result.output
+    n = _load(tmp_path).notification
+    assert n.provider == "telegram"
+    assert (n.telegram_token, n.telegram_chat_id) == ("123:SECRET", "987")
+
+
+def test_init_telegram_empty_token_reprompts(tmp_path):
+    result = _invoke_init(tmp_path, inputs="\n\n3\n\n123:ABC\n987\n\n")
+    assert result.exit_code == 0, result.output
+    assert _load(tmp_path).notification.telegram_token == "123:ABC"
+
+
+def test_init_ntfy_invalid_topic_reprompts(tmp_path):
+    result = _invoke_init(tmp_path, inputs="\n\n2\nbad topic!\ngood-topic\n\n")
+    assert result.exit_code == 0, result.output
+    assert _load(tmp_path).notification.ntfy_topic == "good-topic"

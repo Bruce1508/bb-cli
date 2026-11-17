@@ -199,3 +199,29 @@ def test_ann_shows_multiple_announcements(tmp_path):
     result = _invoke(tmp_path)
     assert "First Post" in result.output
     assert "Second Post" in result.output
+
+
+def test_ann_marks_shown_announcements_read(tmp_path):
+    from datetime import datetime, timezone
+    from unittest.mock import patch
+
+    from typer.testing import CliRunner
+
+    from bb.adapters.base import Announcement
+    from bb.cli import app
+    from bb.db import Database
+
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    db.upsert_announcement(Announcement(
+        id="a1", course="BTP200", title="Lab moved", body="Lab 5 is now Thursday.",
+        posted_at=datetime.now(timezone.utc), read_at=None,
+    ))
+    db.close()
+    runner = CliRunner()
+    with patch("bb.config.BB_DIR", tmp_path), patch("bb.cli._warn_if_session_stale"):
+        first = runner.invoke(app, ["ann", "--unread"])
+        second = runner.invoke(app, ["ann", "--unread"])
+    assert "Lab moved" in first.output
+    assert "Lab 5 is now Thursday." in first.output
+    assert "No unread announcements." in second.output
