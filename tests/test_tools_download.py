@@ -99,7 +99,7 @@ def test_read_file_content_returns_dict(tmp_path):
 
     with (
         patch("bb.config.BB_DIR", tmp_path),
-        patch("bb.tools.queries.pdfplumber.open", return_value=_make_pdf_mock("Course content")),
+        patch("bb.text_extract.pdfplumber.open", return_value=_make_pdf_mock("Course content")),
     ):
         result = read_file_content("BTP200", "syllabus")
     assert isinstance(result, dict)
@@ -112,7 +112,7 @@ def test_read_file_content_returns_text(tmp_path):
 
     with (
         patch("bb.config.BB_DIR", tmp_path),
-        patch("bb.tools.queries.pdfplumber.open", return_value=_make_pdf_mock("My syllabus")),
+        patch("bb.text_extract.pdfplumber.open", return_value=_make_pdf_mock("My syllabus")),
     ):
         result = read_file_content("BTP200", "syllabus")
     assert result["text"] == "My syllabus"
@@ -125,7 +125,7 @@ def test_read_file_content_has_required_keys(tmp_path):
 
     with (
         patch("bb.config.BB_DIR", tmp_path),
-        patch("bb.tools.queries.pdfplumber.open", return_value=_make_pdf_mock()),
+        patch("bb.text_extract.pdfplumber.open", return_value=_make_pdf_mock()),
     ):
         result = read_file_content("BTP200", "syllabus")
     for key in ("filename", "course", "text", "pages", "char_count", "truncated"):
@@ -139,7 +139,7 @@ def test_read_file_content_page_count_correct(tmp_path):
 
     with (
         patch("bb.config.BB_DIR", tmp_path),
-        patch("bb.tools.queries.pdfplumber.open", return_value=_make_pdf_mock("text", pages=3)),
+        patch("bb.text_extract.pdfplumber.open", return_value=_make_pdf_mock("text", pages=3)),
     ):
         result = read_file_content("BTP200", "syllabus")
     assert result["pages"] == 3
@@ -153,7 +153,7 @@ def test_read_file_content_truncates_at_8000_chars(tmp_path):
 
     with (
         patch("bb.config.BB_DIR", tmp_path),
-        patch("bb.tools.queries.pdfplumber.open", return_value=_make_pdf_mock(long_text)),
+        patch("bb.text_extract.pdfplumber.open", return_value=_make_pdf_mock(long_text)),
     ):
         result = read_file_content("BTP200", "syllabus")
     assert len(result["text"]) == 8000
@@ -168,7 +168,7 @@ def test_read_file_content_not_truncated_when_short(tmp_path):
 
     with (
         patch("bb.config.BB_DIR", tmp_path),
-        patch("bb.tools.queries.pdfplumber.open", return_value=_make_pdf_mock("short")),
+        patch("bb.text_extract.pdfplumber.open", return_value=_make_pdf_mock("short")),
     ):
         result = read_file_content("BTP200", "syllabus")
     assert result["truncated"] is False
@@ -193,11 +193,11 @@ def test_read_file_content_error_when_file_not_found(tmp_path):
 def test_read_file_content_error_when_not_pdf(tmp_path):
     pdf_path = tmp_path / "files" / "BTP200"
     pdf_path.mkdir(parents=True)
-    (pdf_path / "notes.docx").touch()
+    (pdf_path / "notes.zip").touch()
 
     with patch("bb.config.BB_DIR", tmp_path):
         result = read_file_content("BTP200", "notes")
-    assert result["error"] == "not a PDF"
+    assert result["error"].startswith("unsupported file type")
 
 
 def test_read_file_content_error_when_pdfplumber_raises(tmp_path):
@@ -211,7 +211,7 @@ def test_read_file_content_error_when_pdfplumber_raises(tmp_path):
 
     with (
         patch("bb.config.BB_DIR", tmp_path),
-        patch("bb.tools.queries.pdfplumber.open", return_value=broken_mock),
+        patch("bb.text_extract.pdfplumber.open", return_value=broken_mock),
     ):
         result = read_file_content("BTP200", "corrupt")
     assert "unreadable" in result["error"]
@@ -224,7 +224,7 @@ def test_read_file_content_case_insensitive_course(tmp_path):
 
     with (
         patch("bb.config.BB_DIR", tmp_path),
-        patch("bb.tools.queries.pdfplumber.open", return_value=_make_pdf_mock("content")),
+        patch("bb.text_extract.pdfplumber.open", return_value=_make_pdf_mock("content")),
     ):
         result = read_file_content("btp200", "notes")
     assert result["course"] == "BTP200"
@@ -237,7 +237,7 @@ def test_read_file_content_pages_through_long_text(tmp_path):
     (files_dir / "notes.pdf").write_bytes(b"%PDF")
     with (
         patch("bb.config.BB_DIR", tmp_path),
-        patch("bb.tools.queries.pdfplumber.open", return_value=_make_pdf_mock(long_text)),
+        patch("bb.text_extract.pdfplumber.open", return_value=_make_pdf_mock(long_text)),
     ):
         first = read_file_content("BTP200", "notes")
         second = read_file_content("BTP200", "notes", offset=first["next_offset"])

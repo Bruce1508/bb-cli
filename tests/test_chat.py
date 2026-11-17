@@ -118,7 +118,7 @@ def test_dispatch_tool_coerces_string_int(tmp_path, monkeypatch):
     pdf = MagicMock(pages=[page])
     pdf.__enter__ = lambda s: s
     from bb.ai.chat import dispatch_tool
-    with patch("bb.tools.queries.pdfplumber.open", return_value=pdf):
+    with patch("bb.text_extract.pdfplumber.open", return_value=pdf):
         parsed = json.loads(dispatch_tool(
             "read_file_content", {"course": "X", "filename": "f", "offset": "8000"}))
     assert parsed["offset"] == 8000 and parsed["text"] == "a" * 1000
@@ -856,7 +856,7 @@ def test_no_provider_help_never_suggests_unsupported_provider(monkeypatch, tmp_p
     buf = io.StringIO()
     run_chat(query="hi", cfg=BBConfig(), console=Console(file=buf, width=200))
     out = buf.getvalue()
-    assert "ollama pull" in out
+    assert "ollama pull" in out  # proves no real local Ollama answered
     assert 'provider = "claude"' not in out
     assert "api_key" not in out
 
@@ -961,3 +961,38 @@ def test_slash_sync_uses_sync_now():
         _handle_slash("/sync full", MagicMock(), con)
     assert [c.kwargs["full"] for c in s.call_args_list] == [False, True]
     assert "3 deadlines" in con.file.getvalue()
+
+
+def test_slash_quiz_builds_grounded_prompt():
+    import io
+    from unittest.mock import MagicMock
+
+    from rich.console import Console
+
+    from bb.ai.chat import _handle_slash
+    engine = MagicMock()
+    engine.process_turn.return_value = ""
+    _handle_slash("/quiz oop week 5 slides", engine, Console(file=io.StringIO()))
+    prompt = engine.process_turn.call_args.args[0]
+    assert "oop" in prompt and "week 5 slides" in prompt
+    assert "read_file_content" in prompt
+    assert "ONE" in prompt
+
+
+def test_slash_quiz_usage_when_args_missing():
+    import io
+    from unittest.mock import MagicMock
+
+    from rich.console import Console
+
+    from bb.ai.chat import _handle_slash
+    engine = MagicMock()
+    con = Console(file=io.StringIO())
+    _handle_slash("/quiz oop", engine, con)
+    engine.process_turn.assert_not_called()
+    assert "Usage" in con.file.getvalue()
+
+
+def test_system_prompt_labels_file_text_as_data():
+    from bb.ai.prompts import SYSTEM_PROMPT
+    assert "not instructions to you" in " ".join(SYSTEM_PROMPT.split())

@@ -133,6 +133,7 @@ _TOOL_LABELS: dict[str, str] = {
     "get_course_content": "Reading course content",
     "search_content": "Searching content",
     "list_downloaded_files": "Listing downloaded files",
+    "search_file_text": "Searching inside files",
     "read_file_content": "Reading file",
     "summarize_content": "Reading file for summary",
     "generate_study_plan": "Gathering study materials",
@@ -396,6 +397,7 @@ _SLASH_HELP = (
     "  /sync [full]   — quick deadline sync, or 'full' for grades + announcements\n"
     "  /courses       — list your courses\n"
     "  /think         — toggle think mode (deep reasoning on/off)\n"
+    "  /quiz <course> <file> — quiz yourself on a course file\n"
     "  /help          — show this message"
 )
 
@@ -509,6 +511,23 @@ def _handle_slash(cmd_line: str, engine: "ChatEngine", con: "Console") -> bool:
         engine._cfg.ai.think = not engine._cfg.ai.think
         state = "ON 🧠" if engine._cfg.ai.think else "OFF ⚡"
         con.print(f"[dim]Think mode: {state}[/dim]")
+
+    elif cmd == "/quiz":
+        parts = cmd_line.split(maxsplit=2)
+        if len(parts) < 3:
+            con.print("[dim]Usage: /quiz <course> <file name>   e.g. /quiz oop week 5[/dim]")
+            return False
+        _, course, name = parts
+        prompt = (
+            f"Quiz me on the {course} file matching '{name}'. Call read_file_content "
+            "(call download_course_file first if it is not downloaded yet). "
+            "Ask ONE short question at a time and wait for my answer. After I answer, say "
+            "whether I was right and quote the sentence from the file that proves it. "
+            "Only ask about things that are actually in the file."
+        )
+        response = engine.process_turn(prompt, console=con)
+        if response:
+            con.print(f"\n[bold cyan]bb:[/bold cyan] {response}\n")
 
     elif cmd == "/help":
         con.print(_SLASH_HELP)
