@@ -673,7 +673,7 @@ def test_history_loaded_on_init(monkeypatch, tmp_path):
 
     from bb.ai.chat import ChatEngine
     from bb.config import BBConfig
-    engine = ChatEngine(BBConfig())
+    engine = ChatEngine(BBConfig(), resume=True)
 
     # system + 2 history messages
     assert len(engine._msgs) == 3
@@ -732,7 +732,7 @@ def test_clear_history_wipes_file(monkeypatch, tmp_path):
 
     from bb.ai.chat import ChatEngine
     from bb.config import BBConfig
-    engine = ChatEngine(BBConfig())
+    engine = ChatEngine(BBConfig(), resume=True)
     assert len(engine._msgs) == 3  # system + 2 history
 
     engine.clear_history()
@@ -812,3 +812,36 @@ def test_estimate_study_time_does_not_promise_final_exam_math():
 def test_system_prompt_forbids_grade_weight_math():
     from bb.ai.prompts import SYSTEM_PROMPT
     assert "weights are unknown" in SYSTEM_PROMPT
+
+
+def test_new_session_does_not_load_old_history(monkeypatch, tmp_path):
+    import sys
+    monkeypatch.setattr("bb.config.BB_DIR", tmp_path)
+    monkeypatch.setattr("bb.ai.chat._config_module.BB_DIR", tmp_path)
+    (tmp_path / "chat_history.json").write_text(
+        json.dumps([{"role": "user", "content": "old"}, {"role": "assistant", "content": "a"}])
+    )
+    monkeypatch.setitem(sys.modules, "ollama", _make_mock_ollama_module())
+    monkeypatch.delitem(sys.modules, "bb.ai.providers.ollama", raising=False)
+    from bb.ai.chat import ChatEngine
+    from bb.config import BBConfig
+    engine = ChatEngine(BBConfig())
+    assert len(engine._msgs) == 1
+    assert engine.resume_history() == 2
+    assert engine._msgs[1]["content"] == "old"
+
+
+def test_slash_sync_uses_sync_now():
+    import io
+    from unittest.mock import MagicMock, patch
+
+    from rich.console import Console
+
+    from bb.ai.chat import _handle_slash
+    con = Console(file=io.StringIO())
+    fake = {"ok": True, "full": False, "output": "✔ 3 deadlines (1 new)", "recent_changes": []}
+    with patch("bb.tools.actions.sync_now", return_value=fake) as s:
+        _handle_slash("/sync", MagicMock(), con)
+        _handle_slash("/sync full", MagicMock(), con)
+    assert [c.kwargs["full"] for c in s.call_args_list] == [False, True]
+    assert "3 deadlines" in con.file.getvalue()

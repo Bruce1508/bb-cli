@@ -1230,10 +1230,11 @@ def open_item(
 @app.command()
 def chat(
     query: Optional[str] = typer.Argument(None, help="Ask a single question (omit for REPL)"),
+    resume: bool = typer.Option(False, "--resume", "-r", help="Continue the previous conversation"),
 ) -> None:
     """Chat with your AI assistant — ask about deadlines, grades, and course content."""
     from bb.ai.chat import run_chat
-    run_chat(query=query, cfg=load_config(), console=console)
+    run_chat(query=query, cfg=load_config(), console=console, resume=resume)
 
 
 @app.command(name="mcp-server")
