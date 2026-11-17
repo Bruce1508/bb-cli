@@ -16,7 +16,7 @@ from rich.table import Table
 
 import bb.config as _config_module
 from bb.auto_setup import install_auto_sync, uninstall_auto_sync
-from bb.config import NotificationConfig, load_config, save_config
+from bb.config import BBConfig, NotificationConfig, load_config, save_config
 from bb.db import Database
 from bb.downloader import Downloader, DownloadError
 from bb.notify import dispatch_notify
@@ -421,6 +421,20 @@ def status() -> None:
             )
 
 
+def _run_proactive(cfg: BBConfig, db_path) -> None:
+    """Send due-soon reminders (deduped). Never fails the sync."""
+    from bb.reminders import send_reminders
+
+    try:
+        with Database(db_path) as db:
+            db.setup()
+            n = send_reminders(db, cfg.notification)
+        if n:
+            console.print(f"[blue]⏰[/blue] {n} deadline reminder{'s' if n != 1 else ''} sent")
+    except Exception as exc:
+        console.print(f"[yellow]⚠[/yellow] Reminders failed: {exc}")
+
+
 @app.command()
 def sync(
     ical_only: bool = typer.Option(
@@ -537,6 +551,8 @@ def sync(
     else:
         console.print("[dim]Phase 1: No iCal URL configured — run bb import-ical <url> first[/dim]")
 
+    if not dry_run:
+        _run_proactive(cfg, db_path)  # after iCal, so --ical-only syncs also remind
     if ical_only or dry_run:
         return
 
@@ -649,6 +665,8 @@ def sync(
         label = f"{total_new} new item{'s' if total_new != 1 else ''} synced"
         dispatch_notify(cfg.notification, "bb", label)
         console.print(f"[blue]🔔[/blue] {label}")
+
+    _run_proactive(cfg, db_path)  # again: Phase 2 may have found stream-only deadlines
 
 
 @app.command()
