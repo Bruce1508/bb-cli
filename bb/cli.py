@@ -1241,9 +1241,20 @@ def _print_ai_status() -> None:
         )
 
 
+def _first_sync_succeeded(since: str) -> bool:
+    """True if a sync_log row without an error was written at/after `since` (ISO UTC)."""
+    with Database(_config_module.BB_DIR / "bb.db") as db:
+        db.setup()
+        row = db._conn.execute(
+            "SELECT 1 FROM sync_log WHERE error IS NULL AND synced_at >= ? LIMIT 1", (since,)
+        ).fetchone()
+    return row is not None
+
+
 @app.command()
 def setup() -> None:
     """One command to get going: settings → browser → login → first sync → auto-sync."""
+    started = datetime.now(timezone.utc).isoformat()
     steps = [
         ("1/4 Settings", init),
         ("2/4 Browser", setup_browsers),
@@ -1254,13 +1265,20 @@ def setup() -> None:
         console.rule(f"[bold]{label}[/bold]")
         try:
             step()
-        except typer.Exit as exc:
-            if exc.exit_code:
+        except (typer.Exit, typer.Abort, KeyboardInterrupt) as exc:
+            if not isinstance(exc, typer.Exit) or exc.exit_code:
                 console.print(
                     f"[red]✘[/red] {label} failed. Fix the error above, then run "
                     "[bold]bb setup[/bold] again (finished steps are safe to repeat)."
                 )
                 raise
+
+    if not _first_sync_succeeded(started):
+        console.print(
+            "[red]✘[/red] First sync didn't succeed — fix the errors above, then run "
+            "[bold]bb setup[/bold] again."
+        )
+        raise typer.Exit(1)
 
     if typer.confirm("Sync automatically every few hours? (needed for reminders)", default=True):
         auto_setup(disable=False, interval=0)
