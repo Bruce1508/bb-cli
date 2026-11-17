@@ -105,3 +105,9 @@ def test_read_file_content_cannot_escape_bb_dir(tmp_path):
         result = read_file_content("../../outside", "f")
     assert "error" in result
     opened.assert_not_called()
+
+
+def test_resolve_course_ambiguity_uses_sanitized_text(courses):
+    with pytest.raises(ValueError, match="WEB322"):
+        resolve_course("web?")
+    assert resolve_course("btp!") == "BTP200"

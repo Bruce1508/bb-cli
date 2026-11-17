@@ -195,12 +195,15 @@ def resolve_course(text: str | None) -> str | None:
     if text is None or text.strip().lower() in _NO_FILTER:
         return None
     query = text.strip()
-    upper = query.upper()
+    # Callers use the code as a path component (files/<code>), so it may only hold safe chars.
+    safe = re.sub(r"[^A-Z0-9_-]", "", query.upper())
+    if not safe:
+        return "NONE"
     codes = get_course_list()
-    if upper in codes:
-        return upper
+    if safe in codes:
+        return safe
     for hits in (
-        [c for c in codes if upper in c.upper()],
+        [c for c in codes if safe in c.upper()],
         [code for code, name in _course_names().items() if query.lower() in name.lower()],
     ):
         if len(hits) == 1:
@@ -210,8 +213,7 @@ def resolve_course(text: str | None) -> str | None:
                 f"Ambiguous course '{text}': matches {', '.join(sorted(hits))}. "
                 "Use one of these codes."
             )
-    # Callers use the code as a path component (files/<code>), so it may only hold safe chars.
-    return re.sub(r"[^A-Z0-9_-]", "", upper) or "NONE"
+    return safe
 
 
 def get_sync_status() -> dict:
