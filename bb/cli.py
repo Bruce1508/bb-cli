@@ -468,7 +468,7 @@ def status() -> None:
             )
 
 
-def _run_proactive(cfg: BBConfig, db_path: Path) -> None:
+def _run_proactive(cfg: BBConfig, db_path: Path, digest: bool = True) -> None:
     """Send due-soon reminders and the daily digest (each deduped). Never fails the sync."""
     from bb.briefing import send_daily_digest
     from bb.reminders import send_reminders
@@ -482,6 +482,8 @@ def _run_proactive(cfg: BBConfig, db_path: Path) -> None:
     except Exception as exc:
         console.print(f"[yellow]⚠[/yellow] Reminders failed: {exc}")
 
+    if not digest:
+        return
     try:
         with Database(db_path) as db:
             db.setup()
@@ -520,6 +522,7 @@ def sync(
     BB_DIR = _config_module.BB_DIR
     db_path = BB_DIR / "bb.db"
     total_new = 0
+    session_dead = False
 
     # --- Preflight: verify session liveness before any Playwright work ---
     if not ical_only and not dry_run:
@@ -533,7 +536,11 @@ def sync(
                 return
         except SessionError as exc:
             console.print(f"[red]✘[/red] {exc}")
-            console.print("[dim]  Sync aborted — no data was changed.[/dim]")
+            if not refresh_only:
+                console.print(
+                    "[dim]↩ Session expired — syncing deadlines from iCal only. "
+                    "Run bb auth for grades and announcements.[/dim]"
+                )
             with Database(db_path) as db:
                 db.setup()
                 db.log_sync("preflight", 0, 0, error="session_dead")
@@ -545,8 +552,10 @@ def sync(
                     priority="high",
                 )
                 db.log_notification("session_expired_probe")
-            _run_proactive(cfg, db_path)  # reminders must not depend on a live session
-            raise typer.Exit(code=1)
+            if refresh_only:  # liveness probe only
+                raise typer.Exit(code=1)
+            session_dead = True
+            ical_only = True  # iCal needs no auth; fall through to Phase 1
     elif refresh_only:
         console.print("[dim]--refresh-only has no effect with --ical-only or --dry-run[/dim]")
         return
@@ -610,8 +619,11 @@ def sync(
         console.print("[dim]Phase 1: No iCal URL configured — run bb import-ical <url> first[/dim]")
 
     if not dry_run:
-        _run_proactive(cfg, db_path)  # after iCal, so --ical-only syncs also remind
+        # full sync: the digest waits for the end-of-sync call, after all phases
+        _run_proactive(cfg, db_path, digest=ical_only)
     if ical_only or dry_run:
+        if session_dead:
+            raise typer.Exit(code=1)
         return
 
     # --- Phase 2: Activity Stream ---

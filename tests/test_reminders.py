@@ -76,18 +76,25 @@ def test_sync_ical_only_sends_reminders(tmp_path):
     assert "reminder" in result.output
 
 
-def test_sync_dead_session_still_reminds(tmp_path):
-    from typer.testing import CliRunner
-
-    from bb.cli import app
-    from bb.security.session import SessionError
+def _seed_due_soon(tmp_path):
     db = Database(tmp_path / "bb.db")
     db.setup()
     db.upsert_deadline(Deadline("d1", "BTP200", "Lab 4",
                                 datetime.now(timezone.utc) + timedelta(hours=3), "ical"))
     db.close()
+
+
+def test_sync_dead_session_still_refreshes_ical_and_reminds(tmp_path):
+    from typer.testing import CliRunner
+
+    from bb.cli import app
+    from bb.config import BBConfig
+    from bb.security.session import SessionError
+    _seed_due_soon(tmp_path)
     with (
         patch("bb.config.BB_DIR", tmp_path),
+        patch("bb.cli.load_config", return_value=BBConfig(ical_url="https://x/feed.ics")),
+        patch("bb.sync.sync_ical", return_value=(1, 0)) as ical,
         patch("bb.reminders.dispatch_notify") as m,
         patch("bb.notify.terminal.notify"),
         patch("bb.cli.dispatch_notify"),  # session-expired notice
@@ -95,7 +102,39 @@ def test_sync_dead_session_still_reminds(tmp_path):
     ):
         result = CliRunner().invoke(app, ["sync"])
     assert result.exit_code == 1, result.output
+    ical.assert_called_once()
     m.assert_called_once()
+    assert "iCal only" in result.output
+
+
+def test_sync_refresh_only_dead_session_skips_ical(tmp_path):
+    from typer.testing import CliRunner
+
+    from bb.cli import app
+    from bb.config import BBConfig
+    from bb.security.session import SessionError
+    with (
+        patch("bb.config.BB_DIR", tmp_path),
+        patch("bb.cli.load_config", return_value=BBConfig(ical_url="https://x/feed.ics")),
+        patch("bb.sync.sync_ical", return_value=(1, 0)) as ical,
+        patch("bb.notify.terminal.notify"),
+        patch("bb.cli.dispatch_notify"),
+        patch("bb.sync.preflight_session", side_effect=SessionError("dead")),
+    ):
+        result = CliRunner().invoke(app, ["sync", "--refresh-only"])
+    assert result.exit_code == 1, result.output
+    ical.assert_not_called()
+
+
+def test_run_proactive_digest_false_skips_digest(tmp_path):
+    from bb.cli import _run_proactive
+    from bb.config import BBConfig
+    with (
+        patch("bb.briefing.send_daily_digest") as d,
+        patch("bb.reminders.send_reminders", return_value=0),
+    ):
+        _run_proactive(BBConfig(), tmp_path / "bb.db", digest=False)
+    d.assert_not_called()
 
 
 def test_reminder_failure_does_not_fail_sync(tmp_path):
