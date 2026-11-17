@@ -1067,3 +1067,7 @@ def setup_browsers() -> None:
     result = subprocess.run(["playwright", "install", "chromium"], check=False)
     if result.returncode != 0:
         raise typer.Exit(1)
+
+
+if __name__ == "__main__":
+    app()

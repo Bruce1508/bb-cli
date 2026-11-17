@@ -196,3 +196,16 @@ def test_init_output_mentions_database_initialized(tmp_path):
     result = _invoke_init(tmp_path)
     output_lower = result.output.lower()
     assert "database" in output_lower or "bb.db" in output_lower
+
+
+def test_cli_module_is_runnable_with_python_m():
+    """Chat /sync shells out to `python -m bb.cli`; without a __main__ guard it silently no-ops."""
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-m", "bb.cli", "version"],
+        capture_output=True, text=True, timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "bb-cli" in result.stdout
