@@ -6,6 +6,10 @@ No Playwright required — cookies from storage_state JSON work for direct HTTP.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import re
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -70,6 +74,10 @@ class Downloader:
         except httpx.RequestError as e:
             dest_path.unlink(missing_ok=True)
             raise DownloadError(str(e)) from e
+        except OSError:  # disk full, permission, name too long: no partial file left behind
+            with contextlib.suppress(OSError):
+                dest_path.unlink(missing_ok=True)
+            raise
         return dest_path
 
     def _resolve_filename(self, dest_dir: Path, filename: str) -> Path:
@@ -105,16 +113,34 @@ def collect_downloadable(items: list[ContentItem]) -> list[ContentItem]:
     return result
 
 
-def safe_filename(item: ContentItem) -> str:
+def safe_filename(item: ContentItem, unique: bool = False) -> str:
     """Filename for a downloaded item: never a path, never hidden, never empty.
 
-    Titles come from Blackboard (untrusted), so path separators are replaced and a
-    title made only of dots/spaces (e.g. "..") becomes "file".
+    Titles come from Blackboard (untrusted), so path separators are replaced, control
+    characters (NUL etc.) dropped, the stem capped at 150 chars, and a title made only of
+    dots/spaces (e.g. "..") becomes "file". unique=True appends a hash of the download url
+    ("Slides-1a2b3c.pdf") so same-titled items never share a file.
     """
-    stem = item.title.replace("/", "_").replace("\\", "_").strip()
+    stem = _CONTROL.sub("", item.title).replace("/", "_").replace("\\", "_").strip()
     if not stem.strip(". "):
         stem = "file"
-    return stem.lstrip(".") + ext_from_url(item.download_url)
+    stem = stem.lstrip(".")[:_STEM_MAX]
+    if unique:
+        stem += "-" + hashlib.sha1((item.download_url or "").encode()).hexdigest()[:6]
+    return stem + _CONTROL.sub("", ext_from_url(item.download_url))
+
+
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_STEM_MAX = 150
+
+
+def already_downloaded(db: Database, course_code: str, url: str) -> str | None:
+    """Filename of a recorded, non-empty download of this url, else None."""
+    row = db.download_by_url(course_code, url)
+    if row is None:
+        return None
+    path = Path(row[1])
+    return row[0] if path.is_file() and path.stat().st_size > 0 else None
 
 
 @dataclass
@@ -132,27 +158,36 @@ def download_items(
     db: Database,
     on_event: Callable[[str, str, str], None] | None = None,
 ) -> DownloadReport:
-    """Download each item unless a non-empty copy exists; record successes in the DB.
+    """Download each item unless this url was already downloaded; record successes in the DB.
 
-    Failures are collected in the report, never raised, so one bad file can't stop the rest.
+    Same-titled items (e.g. "Lecture Slides" in every week) get a url-hash suffix so they
+    never overwrite or stand in for each other. Failures are collected in the report, never
+    raised, so one bad file can't stop the rest.
     """
     report = DownloadReport()
     emit = on_event or (lambda *_: None)
+    name_counts = Counter(safe_filename(i) for i in items)
     for item in items:
+        url = item.download_url
         filename = safe_filename(item)
-        existing = dest_dir / filename
-        if existing.exists() and existing.stat().st_size > 0:
-            report.skipped.append(filename)
-            emit("skipped", filename, "already downloaded")
-            continue
         try:
-            saved = downloader.download(item.download_url, dest_dir, filename)
-        except (DownloadError, SessionError) as exc:
+            had = already_downloaded(db, course_code, url)
+            if had:
+                report.skipped.append(had)
+                emit("skipped", had, "already downloaded")
+                continue
+            if name_counts[filename] > 1 or (
+                (dest_dir / filename).exists()
+                and db.download_url_for_file(course_code, filename) != url
+            ):
+                filename = safe_filename(item, unique=True)
+            saved = downloader.download(url, dest_dir, filename)
+            size = saved.stat().st_size
+            db.record_download(course_code, saved.name, str(saved), size, url=url)
+        except (DownloadError, SessionError, OSError, ValueError) as exc:
             report.failed.append((filename, str(exc)))
             emit("failed", filename, str(exc))
             continue
-        size = saved.stat().st_size
-        db.record_download(course_code, saved.name, str(saved), size)
         report.saved.append(saved)
         emit("saved", saved.name, f"{size // 1024} KB")
     return report

@@ -259,6 +259,11 @@ def test_download_skips_already_downloaded_file(tmp_path):
     already = tmp_path / "files" / "BTP200" / "Syllabus.pdf"
     already.parent.mkdir(parents=True, exist_ok=True)
     already.write_bytes(b"existing")
+    from bb.db import Database
+    with Database(tmp_path / "bb.db") as db:
+        db.setup()
+        db.record_download("BTP200", "Syllabus.pdf", str(already), 8,
+                           url=_pdf_item().download_url)
     with (
         patch("bb.config.BB_DIR", tmp_path),
         patch("bb.cli.Downloader") as mock_dl_cls,

@@ -92,3 +92,12 @@ def test_record_download_accepts_none_size(tmp_path):
         db.record_download("BTP200", "nosize.pdf", "/tmp/nosize.pdf", None)
         row = db._conn.execute("SELECT size_bytes FROM downloads").fetchone()
     assert row[0] is None
+
+
+def test_migration_7_adds_url_and_record_download_stores_it(tmp_path):
+    with Database(tmp_path / "bb.db") as db:
+        db.setup()
+        db.record_download("BTP200", "a.pdf", "/a", 1, url="https://h/a.pdf")
+        row = db._conn.execute("SELECT url FROM downloads").fetchone()
+        version = db._conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+    assert row[0] == "https://h/a.pdf" and version >= 7

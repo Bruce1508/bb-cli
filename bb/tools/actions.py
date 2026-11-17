@@ -70,10 +70,17 @@ def download_course_file(course: str, name: str) -> dict:
     read_file_content with the same course and the downloaded filename.
     """
     from bb.cache import load_tree
-    from bb.downloader import Downloader, collect_downloadable, download_items
+    from bb.downloader import (
+        Downloader,
+        already_downloaded,
+        collect_downloadable,
+        download_items,
+    )
     from bb.models.content import find_items
     from bb.security.session import SessionManager
 
+    if not name or not name.strip():  # "" matches every file in the course
+        return {"ok": False, "error": "name must not be empty — pass part of a file title"}
     code = resolve_course(course) or course.upper()
     tree = load_tree(code)
     if tree is None:
@@ -92,15 +99,23 @@ def download_course_file(course: str, name: str) -> dict:
     bb_dir = _config_module.BB_DIR
     with Database(bb_dir / "bb.db") as db:
         db.setup()
+        # Cap only what still needs downloading, so files 6+ of a folder stay reachable.
+        had, todo = [], []
+        for m in matches:
+            name_had = already_downloaded(db, code, m.download_url)
+            if name_had:
+                had.append(name_had)
+            else:
+                todo.append(m)
         report = download_items(
-            matches[:_MAX_FILES_PER_CALL], code, bb_dir / "files" / code,
+            todo[:_MAX_FILES_PER_CALL], code, bb_dir / "files" / code,
             Downloader(SessionManager(bb_dir / "session.enc")), db,
         )
     return {
         "ok": not report.failed,
         "course": code,
         "downloaded": [p.name for p in report.saved],
-        "already_had": report.skipped,
+        "already_had": had + report.skipped,
         "failed": [f"{n}: {e}" for n, e in report.failed],
-        "more_matches": max(0, len(matches) - _MAX_FILES_PER_CALL),
+        "more_matches": max(0, len(todo) - _MAX_FILES_PER_CALL),
     }

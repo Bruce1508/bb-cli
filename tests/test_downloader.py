@@ -239,6 +239,8 @@ def test_download_items_reports_each_outcome(tmp_path):
     (dest / "Week 1.pdf").write_bytes(b"old")
     db = Database(tmp_path / "bb.db")
     db.setup()
+    db.record_download("BTP200", "Week 1.pdf", str(dest / "Week 1.pdf"), 3,
+                       url="https://h/a/w1.pdf?x=1")
     events = []
     report = download_items(
         _items()[:2], "BTP200", dest, _FakeDL(), db,
@@ -270,3 +272,82 @@ def test_safe_filename_never_escapes_or_hides():
     assert name(".hidden") == "hidden.pdf"
     for t in ("../x", "..", "a\\b", "/abs"):
         assert "/" not in name(t) and "\\" not in name(t) and not name(t).startswith(".")
+
+
+def test_safe_filename_strips_control_chars_and_caps_length():
+    from bb.downloader import safe_filename
+    assert safe_filename(ContentItem("file", "a\x00b\x1fc\x7f", download_url="https://h/f.pdf")) \
+        == "abc.pdf"
+    long = safe_filename(ContentItem("file", "x" * 300, download_url="https://h/f.pdf"))
+    assert long == "x" * 150 + ".pdf"
+
+
+def test_download_items_survives_nul_and_overlong_titles(tmp_path):
+    """Junk titles must never raise out of download_items and abort the rest of the batch."""
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    items = [
+        ContentItem("file", "bad\x00name", download_url="https://h/1.pdf"),
+        ContentItem("file", "y" * 300, download_url="https://h/2.pdf"),
+        ContentItem("file", "Normal", download_url="https://h/3.pdf"),
+    ]
+    report = download_items(items, "BTP200", tmp_path / "d", _FakeDL(), db)
+    assert report.failed == []
+    assert [p.name for p in report.saved] == ["badname.pdf", "y" * 150 + ".pdf", "Normal.pdf"]
+
+
+def test_download_items_os_error_is_reported_per_item(tmp_path):
+    class _Full(_FakeDL):
+        def download(self, url, dest_dir, filename):
+            if url.endswith("1.pdf"):
+                raise OSError(28, "No space left on device")
+            return super().download(url, dest_dir, filename)
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    items = [ContentItem("file", "A", download_url="https://h/1.pdf"),
+             ContentItem("file", "B", download_url="https://h/2.pdf")]
+    report = download_items(items, "BTP200", tmp_path / "d", _Full(), db)
+    assert [n for n, _ in report.failed] == ["A.pdf"]
+    assert [p.name for p in report.saved] == ["B.pdf"]
+
+
+def test_download_unlinks_partial_file_on_os_error(tmp_path):
+    mock_client = _make_mock_client()
+    mock_client.stream.return_value.iter_bytes.side_effect = OSError(28, "No space left")
+    with patch("bb.downloader.httpx.Client", return_value=mock_client):
+        with pytest.raises(OSError):
+            Downloader(_make_sm()).download("https://h/f.pdf", tmp_path, "f.pdf")
+    assert not (tmp_path / "f.pdf").exists()
+
+
+def test_duplicate_titles_get_distinct_files_and_skip_on_rerun(tmp_path):
+    """'Lecture Slides' in every week folder must not collapse into one file."""
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    dest = tmp_path / "d"
+    items = [ContentItem("file", "Lecture Slides", download_url="https://h/w1/s.pdf"),
+             ContentItem("file", "Lecture Slides", download_url="https://h/w2/s.pdf")]
+    first = download_items(items, "BTP200", dest, _FakeDL(), db)
+    names = [p.name for p in first.saved]
+    assert len(names) == 2 and len(set(names)) == 2
+    second = download_items(items, "BTP200", dest, _FakeDL(), db)
+    assert second.saved == [] and sorted(second.skipped) == sorted(names)
+
+
+def test_same_title_in_a_later_call_does_not_reuse_the_other_weeks_file(tmp_path):
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    dest = tmp_path / "d"
+    w1 = ContentItem("file", "Lecture Slides", download_url="https://h/w1/s.pdf")
+    w5 = ContentItem("file", "Lecture Slides", download_url="https://h/w5/s.pdf")
+    download_items([w1], "BTP200", dest, _FakeDL(), db)
+    report = download_items([w5], "BTP200", dest, _FakeDL(), db)
+    assert report.skipped == []
+    assert len(report.saved) == 1 and report.saved[0].name != "Lecture Slides.pdf"
+
+
+def test_safe_filename_unique_hashes_before_the_extension():
+    from bb.downloader import safe_filename
+    item = ContentItem("file", "Week 1. Intro", download_url="https://h/w1/s.pdf")
+    name = safe_filename(item, unique=True)
+    assert name.startswith("Week 1. Intro-") and name.endswith(".pdf") and len(name) == 24

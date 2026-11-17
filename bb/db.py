@@ -103,6 +103,11 @@ CREATE TABLE IF NOT EXISTS change_log (
 INSERT OR IGNORE INTO schema_version VALUES (6);
 """
 
+MIGRATION_7 = """
+ALTER TABLE downloads ADD COLUMN url TEXT;
+INSERT OR IGNORE INTO schema_version VALUES (7);
+"""
+
 MIGRATIONS: dict[int, str] = {
     1: MIGRATION_1,
     2: MIGRATION_2,
@@ -110,6 +115,7 @@ MIGRATIONS: dict[int, str] = {
     4: MIGRATION_4,
     5: MIGRATION_5,
     6: MIGRATION_6,
+    7: MIGRATION_7,
 }
 
 
@@ -376,21 +382,39 @@ class Database:
         filename: str,
         path: str,
         size_bytes: int | None,
+        url: str | None = None,
     ) -> None:
         """Upsert download record. course stored as UPPER(course).
 
-        Preserves row id on re-download.
+        Preserves row id on re-download. url is the source download_url (dedup key).
         """
         self._conn.execute(
-            "INSERT INTO downloads (course, filename, path, size_bytes, downloaded_at)"
-            " VALUES (UPPER(?), ?, ?, ?, ?)"
+            "INSERT INTO downloads (course, filename, path, size_bytes, downloaded_at, url)"
+            " VALUES (UPPER(?), ?, ?, ?, ?, ?)"
             " ON CONFLICT(course, filename) DO UPDATE SET"
             "   path=excluded.path,"
             "   size_bytes=excluded.size_bytes,"
-            "   downloaded_at=excluded.downloaded_at",
-            (course, filename, path, size_bytes, datetime.now(timezone.utc).isoformat()),
+            "   downloaded_at=excluded.downloaded_at,"
+            "   url=excluded.url",
+            (course, filename, path, size_bytes, datetime.now(timezone.utc).isoformat(), url),
         )
         self._conn.commit()
+
+    def download_by_url(self, course: str, url: str) -> tuple[str, str] | None:
+        """(filename, path) of the newest download of `url` for course, or None."""
+        return self._conn.execute(
+            "SELECT filename, path FROM downloads WHERE course = UPPER(?) AND url = ?"
+            " ORDER BY id DESC LIMIT 1",
+            (course, url),
+        ).fetchone()
+
+    def download_url_for_file(self, course: str, filename: str) -> str | None:
+        """The url a stored filename was downloaded from (None if unknown)."""
+        row = self._conn.execute(
+            "SELECT url FROM downloads WHERE course = UPPER(?) AND filename = ?",
+            (course, filename),
+        ).fetchone()
+        return row[0] if row else None
 
     def get_downloads(self, course: str | None = None) -> list[dict]:
         """Return downloads, optionally filtered by course (case-insensitive)."""

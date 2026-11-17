@@ -83,3 +83,36 @@ def test_run_cli_never_shares_stdin_and_ignores_cwd(tmp_path):
         sync_now()
     assert run.call_args.kwargs["stdin"] is subprocess.DEVNULL
     assert run.call_args.args[0][1:4] == ["-P", "-m", "bb.cli"]
+
+
+def _fake_download(self, url, dest_dir, filename):
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    p = dest_dir / filename
+    p.write_bytes(b"x")
+    return p
+
+
+def test_download_course_file_cap_skips_downloaded_before_capping(tmp_path):
+    """Files 6+ of a folder must be reachable: the cap applies only to not-yet-downloaded ones."""
+    files = [ContentItem("file", f"Lab {i}", download_url=f"https://h/lab{i}.pdf")
+             for i in range(8)]
+    tree = ContentTree("BTP200", "_1", datetime.now(timezone.utc),
+                       items=[ContentItem("folder", "Labs", children=files)])
+    with patch("bb.config.BB_DIR", tmp_path):
+        Database(tmp_path / "bb.db").setup()
+        save_tree(tree)
+        with patch("bb.downloader.Downloader.download", _fake_download):
+            first = download_course_file("BTP200", "lab")
+            second = download_course_file("BTP200", "lab")
+    assert len(first["downloaded"]) == 5 and first["more_matches"] == 3
+    assert len(second["downloaded"]) == 3 and second["more_matches"] == 0
+    assert len(second["already_had"]) == 5
+
+
+def test_download_course_file_rejects_empty_name(tmp_path):
+    with patch("bb.config.BB_DIR", tmp_path):
+        Database(tmp_path / "bb.db").setup()
+        save_tree(_tree())
+        for name in ("", "   "):
+            out = download_course_file("BTP200", name)
+            assert out["ok"] is False and "error" in out
