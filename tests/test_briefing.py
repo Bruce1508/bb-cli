@@ -40,7 +40,7 @@ def test_briefing_text_empty():
 def test_briefing_text_lists_and_truncates():
     urgent = [{"course": "BTP200", "title": f"Lab {i}", "when": "due tomorrow"} for i in range(5)]
     text = briefing_text({**EMPTY, "urgent_deadlines": urgent,
-                          "unread_announcements": [{}, {}]})
+                          "unread_announcements": [{}, {}], "unread_count": 2})
     assert "Lab 0" in text and "Lab 2" in text and "Lab 3" not in text
     assert "+2 more" in text
     assert "2 unread announcements" in text
