@@ -154,9 +154,9 @@ def _adopt_legacy(
 ) -> str | None:
     """Backfill url on a url-less row for `filename` whose file is on disk; return its name."""
     path = dest_dir / filename
-    if path.is_file() and path.stat().st_size > 0 and db.set_download_url(course_code, filename, url):
-        return filename
-    return None
+    if not (path.is_file() and path.stat().st_size > 0):
+        return None
+    return filename if db.set_download_url(course_code, filename, url) else None
 
 
 @dataclass
