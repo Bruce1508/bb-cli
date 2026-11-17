@@ -244,3 +244,63 @@ def test_read_file_content_pages_through_long_text(tmp_path):
     assert first["next_offset"] == 8000 and set(first["text"]) == {"A"}
     assert second["text"] == "B" * 3000
     assert second["truncated"] is False and "next_offset" not in second
+
+
+# ---------------------------------------------------------------------------
+# Legacy short course codes (downloads recorded before the course resolver)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def legacy_download(tmp_path):
+    """Real shape: lecture + lab sections, syllabus recorded under bare 'BTP200'."""
+    legacy_dir = tmp_path / "files" / "BTP200"
+    legacy_dir.mkdir(parents=True)
+    syllabus = legacy_dir / "Tentative Syllabus.txt"
+    syllabus.write_text("Hello bb-cli test!")
+    with Database(tmp_path / "bb.db") as db:
+        db.setup()
+        db.upsert_course_map("BTP200NAA", "_1")
+        db.upsert_course_map("BTP200NAAL", "_2")
+        db.upsert_course_map("WEB322NAA", "_3")
+        db.record_download("BTP200", syllabus.name, str(syllabus), 18)
+        db.record_download("BTP200NAA", "lecture.txt", "/l", 1)
+        db.record_download("WEB322NAA", "web.txt", "/w", 1)
+    with patch("bb.config.BB_DIR", tmp_path):
+        yield
+
+
+@pytest.mark.parametrize("course", ["BTP200NAA", "btp200"])
+def test_list_downloaded_files_includes_legacy_short_code(legacy_download, course):
+    names = {f["filename"] for f in list_downloaded_files(course)}
+    assert names == {"Tentative Syllabus.txt", "lecture.txt"}
+
+
+def test_lab_section_does_not_inherit_lecture_downloads(legacy_download):
+    # BTP200NAA is a real course, not a legacy code, so it does not widen BTP200NAAL.
+    names = {f["filename"] for f in list_downloaded_files("BTP200NAAL")}
+    assert names == {"Tentative Syllabus.txt"}
+
+
+def test_read_file_content_finds_file_under_legacy_short_code(legacy_download):
+    result = read_file_content("BTP200", "syllabus")
+    assert result.get("text") == "Hello bb-cli test!"
+    assert result["filename"] == "Tentative Syllabus.txt"
+
+
+@pytest.mark.parametrize("course", ["all", "none", "*", "!!!", "all!", "any.", "a ll"])
+def test_read_file_content_never_reads_across_all_courses(legacy_download, course):
+    assert read_file_content(course, "t") == {"error": "file not found"}
+
+
+def test_read_file_content_prefers_the_course_own_file_over_legacy(legacy_download, tmp_path):
+    own = tmp_path / "files" / "BTP200NAA"
+    own.mkdir(parents=True)
+    (own / "Tentative Syllabus.txt").write_text("current section copy")
+    assert read_file_content("BTP200NAA", "syllabus")["text"] == "current section copy"
+
+
+def test_search_file_text_finds_legacy_download(legacy_download):
+    from bb.tools.queries import search_file_text
+    hits = search_file_text("hello", course="btp200")
+    assert [h["filename"] for h in hits] == ["Tentative Syllabus.txt"]

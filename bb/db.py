@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import html
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -292,7 +293,9 @@ class Database:
                 id=r[0],
                 course=r[1],
                 title=r[2],
-                body=r[3],
+                # Rows synced before entity decoding read back clean (no tag strip:
+                # a decoded '&lt;T&gt;' is real text like List<T>).
+                body=" ".join(html.unescape(r[3] or "").split()),
                 posted_at=datetime.fromisoformat(r[4]),
                 read_at=datetime.fromisoformat(r[5]) if r[5] else None,
             )

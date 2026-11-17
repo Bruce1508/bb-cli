@@ -15,6 +15,7 @@ def courses(tmp_path):
     db.upsert_course_map("BTP200", "_1", "Object-Oriented Software Development")
     db.upsert_course_map("WEB322", "_2", "Web Programming Tools and Frameworks")
     db.upsert_course_map("WEB422", "_3", "Web Programming for Apps and Services")
+    db.upsert_course_map("MAT301", "_4", "Non-Euclidean Geometry")  # key holds "NONE"
     db.upsert_deadline(Deadline("d1", "BTP200", "Lab 4",
                                 datetime.now(timezone.utc) + timedelta(days=1), "ical"))
     db.close()
@@ -111,3 +112,105 @@ def test_resolve_course_ambiguity_uses_sanitized_text(courses):
     with pytest.raises(ValueError, match="WEB322"):
         resolve_course("web?")
     assert resolve_course("btp!") == "BTP200"
+
+
+def _seed_codes(tmp_path, codes):
+    db = Database(tmp_path / "bb.db")
+    db.setup()
+    for i, c in enumerate(codes):
+        db.upsert_course_map(c, f"_{i}")
+    db.close()
+
+
+@pytest.mark.parametrize("codes,text,expected", [
+    (["BTP200NAA", "BTP200NAAL"], "btp200", "BTP200NAA"),  # lecture prefixes its lab
+    (["ABC100", "ABC100L", "ABC100X"], "abc", "ABC100"),
+])
+def test_code_that_prefixes_every_other_hit_wins(tmp_path, codes, text, expected):
+    _seed_codes(tmp_path, codes)
+    with patch("bb.config.BB_DIR", tmp_path):
+        assert resolve_course(text) == expected
+
+
+@pytest.mark.parametrize("codes,text", [
+    (["BTI425NAA", "BTP200NAA"], "BT"),
+    (["ABC100L", "ABC100X"], "abc"),
+])
+def test_no_common_prefix_code_is_still_ambiguous(tmp_path, codes, text):
+    _seed_codes(tmp_path, codes)
+    with patch("bb.config.BB_DIR", tmp_path), pytest.raises(ValueError, match="Ambiguous"):
+        resolve_course(text)
+
+
+@pytest.mark.parametrize("text", [
+    "all!", "any.", "a ll", "!!!", "*?", "null;", "xyz", "btp", "BTP200", "object", "frameworks",
+    "object!", "frame works", "web programming tools?", "-", "_", "_none_", "straße",
+])
+def test_resolve_course_is_idempotent(courses, text):
+    """Callers resolve once and pass the code on; a second resolve must not widen it.
+
+    'all!' used to sanitize to 'ALL', which a second resolve read as "no filter".
+    """
+    once = resolve_course(text)
+    assert once is not None
+    assert resolve_course(once) == once
+
+
+@pytest.mark.parametrize("text", ["all", "all!", "!!!", "*"])
+def test_study_plan_never_spans_every_course(courses, text):
+    from bb.tools.ai_tools import generate_study_plan
+    plan = generate_study_plan(text)
+    assert plan["upcoming_deadlines"] == []  # BTP200's Lab 4 must not leak in
+
+
+@pytest.mark.parametrize("text", ["all", "all!", "!!!"])
+def test_action_tools_refuse_a_non_course(courses, text):
+    from unittest.mock import patch as _patch
+
+    from bb.tools import actions
+    with _patch.object(actions, "_run_cli") as run:
+        assert actions.refresh_course_content(text)["ok"] is False
+        assert actions.download_course_file(text, "slides")["ok"] is False
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("object!", "BTP200"), ("frame works", "WEB322"), ("web programming tools?", "WEB322"),
+])
+def test_resolve_course_display_names_ignore_punctuation(courses, text, expected):
+    assert resolve_course(text) == expected
+
+
+@pytest.mark.parametrize("text", ["programming!", "web-prog"])
+def test_ambiguous_display_name_raises_on_the_first_resolve(courses, text):
+    # Not on a later re-resolve inside a tool's try/except, where it would be swallowed.
+    with pytest.raises(ValueError, match="Ambiguous"):
+        resolve_course(text)
+
+
+def test_resolve_course_idempotent_property():
+    """resolve(resolve(x)) == resolve(x) over seeded random text: callers resolve once
+    and pass the code on, so a second resolve must never widen or change it."""
+    import random
+    import re as _re
+
+    import bb.tools.queries as q
+    codes = ["BTP200NAA", "BTP200NAAL", "BTI425NAA", "SEC", "MAT301", "WEB322", "WEB422"]
+    names = {"BTP200NAA": "Object-Oriented Software Development",
+             "BTI425NAA": "Web Programming for Apps", "MAT301": "Non-Euclidean Geometry",
+             "WEB322": "Web Programming Tools", "WEB422": "Web Programming for Apps and Services",
+             "SEC": "Security: None of the Above"}
+    rng = random.Random(7)
+    alphabet = list("abcdenoprstwg0123459 _-!?.*ß>") + ["all", "none", "_NONE_", "btp", "web"]
+    inputs = {"".join(rng.choice(alphabet) for _ in range(rng.randint(1, 4))) for _ in range(3000)}
+    with patch.object(q, "get_course_list", lambda: codes), \
+         patch.object(q, "_course_names", lambda: names):
+        for x in inputs:
+            try:
+                once = q.resolve_course(x)
+            except ValueError:
+                continue  # ambiguous on the FIRST resolve is the correct, loud outcome
+            if once is None:
+                continue
+            assert once in codes or _re.fullmatch(r"[A-Z0-9_-]+", once), (x, once)
+            assert q.resolve_course(once) == once, (x, once)

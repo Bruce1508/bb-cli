@@ -11,7 +11,7 @@ import sys
 
 import bb.config as _config_module
 from bb.db import Database
-from bb.tools.queries import get_recent_changes, resolve_course
+from bb.tools.queries import NO_MATCH, get_recent_changes, resolve_course
 
 _MAX_FILES_PER_CALL = 5
 _EX_TEMPFAIL = 75  # bb sync: another sync holds the lock
@@ -67,7 +67,9 @@ def refresh_course_content(course: str) -> dict:
     """
     from bb.cache import load_tree
 
-    code = resolve_course(course) or course.upper()
+    code = resolve_course(course) or NO_MATCH
+    if code == NO_MATCH:  # never launch a browser scrape for "all" / "!!!"
+        return {"ok": False, "error": "name one course (e.g. BTP200)"}
     exit_code, output = _run_cli("course", code, "--refresh", timeout=300)
     tree = load_tree(code)
     if exit_code != 0 or tree is None:
@@ -96,7 +98,9 @@ def download_course_file(course: str, name: str) -> dict:
 
     if not name or not name.strip():  # "" matches every file in the course
         return {"ok": False, "error": "name must not be empty — pass part of a file title"}
-    code = resolve_course(course) or course.upper()
+    code = resolve_course(course) or NO_MATCH
+    if code == NO_MATCH:
+        return {"ok": False, "error": "name one course (e.g. BTP200)"}
     tree = load_tree(code)
     if tree is None:
         return {"ok": False, "course": code,

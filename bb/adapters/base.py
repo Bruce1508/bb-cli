@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import html
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
+
+
+def html_to_text(body: str) -> str:
+    """Announcement HTML → plain text: strip tags, decode entities (&nbsp;), collapse spaces."""
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", " ", body or "")).split())
 
 
 @dataclass

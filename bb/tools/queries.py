@@ -167,6 +167,14 @@ def get_course_list() -> list[str]:
 
 
 _NO_FILTER = {"", "all", "any", "*", "none", "null"}
+# Text that names no course. Not in _NO_FILTER, so resolving it again gives it back:
+# resolution must be idempotent, because callers resolve and then pass the code on.
+NO_MATCH = "_NONE_"
+
+
+def _name_key(s: str) -> str:
+    """Display-name match key: letters and digits only, upper-cased like `safe`."""
+    return re.sub(r"[^A-Z0-9]", "", s.upper())
 
 
 def _course_names() -> dict[str, str]:
@@ -187,6 +195,8 @@ def resolve_course(text: str | None) -> str | None:
 
     None / 'all' / 'any' / '*' / 'none' / '' mean "no filter" → None.
     Unique match on code substring, then on display name → that code.
+    Several code matches where exactly one prefixes all the others (a lecture
+    and its lab sections: BTP200NAA, BTP200NAAL) → that one.
     Several matches → ValueError naming them, so the caller can ask which one.
     No match → text.upper() stripped to [A-Z0-9_-] (never a path), so filters
     return nothing rather than everything.
@@ -196,14 +206,23 @@ def resolve_course(text: str | None) -> str | None:
     query = text.strip()
     # Callers use the code as a path component (files/<code>), so it may only hold safe chars.
     safe = re.sub(r"[^A-Z0-9_-]", "", query.upper())
-    if not safe:
-        return "NONE"
+    # "!!!", "all!", and NO_MATCH itself → still no course (keeps resolution idempotent).
+    if not safe or safe == NO_MATCH or safe.lower() in _NO_FILTER:
+        return NO_MATCH
     codes = get_course_list()
     if safe in codes:
         return safe
+    code_hits = [c for c in codes if safe in c.upper()]
+    # A lecture code that prefixes all its lab sections wins: BTP200NAA over BTP200NAAL.
+    roots = [h for h in code_hits if all(o.upper().startswith(h.upper()) for o in code_hits)]
+    if len(code_hits) > 1 and len(roots) == 1:
+        return roots[0]
     for hits in (
-        [c for c in codes if safe in c.upper()],
-        [code for code, name in _course_names().items() if query.lower() in name.lower()],
+        code_hits,
+        # Keyed on `safe`, not the raw text, so resolving the fallthrough `safe` again
+        # makes the same comparison: resolution stays idempotent ('data base?' too).
+        [code for code, name in _course_names().items()
+         if _name_key(safe) and _name_key(safe) in _name_key(name)],
     ):
         if len(hits) == 1:
             return hits[0]
@@ -260,7 +279,7 @@ def get_course_content(course: str) -> dict:
     from bb.cache import load_tree
     from bb.models.content import content_tree_to_dict
 
-    tree = load_tree(resolve_course(course) or course.upper())
+    tree = load_tree(resolve_course(course) or NO_MATCH)
     if tree is None:
         return {}
     return content_tree_to_dict(tree)
@@ -333,14 +352,43 @@ def list_downloaded_files(course: str | None = None) -> list[dict]:
     Args:
         course: Optional course code filter. Case-insensitive.
     """
-    BB_DIR = _config_module.BB_DIR
-    course = resolve_course(course)  # outside the try: an ambiguous course must reach the caller
+    # Resolve outside _downloads_for: an ambiguous course must reach the caller.
+    return _downloads_for(resolve_course(course))
+
+
+def _downloads_for(code: str | None) -> list[dict]:
+    """Download rows for an ALREADY-resolved code (None = every course).
+
+    Never resolves again: resolution isn't idempotent ('all!' → 'ALL' → no filter).
+    """
     try:
-        with Database(BB_DIR / "bb.db") as db:
+        with Database(_config_module.BB_DIR / "bb.db") as db:
             db.setup()
-            return db.get_downloads(course=course)
+            rows = db.get_downloads()
     except Exception:
         return []
+    if code is None:
+        return rows
+    codes = _download_codes(code, {r["course"] for r in rows})
+    return [r for r in rows if r["course"].upper() in codes]
+
+
+def _download_codes(course: str, stored: set[str]) -> set[str]:
+    """Download course codes that belong to resolved `course`.
+
+    That is `course` itself plus legacy short codes recorded before the resolver
+    existed (stored 'BTP200' for 'BTP200NAA'): a stored code that is a prefix of
+    `course`, is not a current course itself, and is path-safe. Only codes that
+    really are in the downloads table are added, never raw user text.
+    """
+    target = course.upper()
+    known = {c.upper() for c in get_course_list()}
+    legacy = {
+        c.upper() for c in stored
+        if c and re.fullmatch(r"[A-Z0-9_-]+", c.upper())
+        and target.startswith(c.upper()) and c.upper() not in known
+    }
+    return {target} | legacy
 
 
 def read_file_content(course: str, filename: str, offset: int = 0) -> dict:
@@ -363,13 +411,22 @@ def read_file_content(course: str, filename: str, offset: int = 0) -> dict:
         {"error": "unsupported file type: <ext>"} if not PDF/DOCX/PPTX/TXT/MD
         {"error": "unreadable: <reason>"} if extraction fails
     """
-    course = resolve_course(course) or course.upper()
-    BB_DIR = _config_module.BB_DIR
-    files_dir = BB_DIR / "files" / course.upper()
-    if not files_dir.exists():
+    course = resolve_course(course)
+    # "all"/"none"/"*" resolve to no filter; a file read must name ONE course, never
+    # fall through to every course's downloads.
+    if course is None or course == NO_MATCH:
         return {"error": "file not found"}
+    course = course.upper()
+    files_root = _config_module.BB_DIR / "files"
+    # Rows list_downloaded_files returns are already limited to path-safe codes.
+    legacy = {f["course"].upper() for f in _downloads_for(course)} - {course}
+    dirs = [files_root / c for c in [course, *sorted(legacy)]]  # the course's own files first
     match = next(
-        (f for f in files_dir.iterdir() if f.is_file() and filename.lower() in f.name.lower()),
+        (
+            f for d in dirs if d.is_dir() for f in sorted(d.iterdir())
+            if f.is_file() and filename.lower() in f.name.lower()
+            and f.resolve().is_relative_to(files_root.resolve())
+        ),
         None,
     )
     if match is None:

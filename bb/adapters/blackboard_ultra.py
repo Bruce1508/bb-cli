@@ -10,7 +10,7 @@ from rich.console import Console
 if TYPE_CHECKING:
     from bb.models.content import ContentTree
 
-from bb.adapters.base import Announcement, Deadline, GradeItem, LMSAdapter
+from bb.adapters.base import Announcement, Deadline, GradeItem, LMSAdapter, html_to_text
 from bb.adapters.registry import register
 from bb.hash import content_hash
 from bb.security.session import SessionManager
@@ -175,8 +175,6 @@ class BlackboardUltraAdapter(LMSAdapter):
         Returns list[Announcement] across all enrolled courses.
         Raises SessionError if the session file is missing or corrupt.
         """
-        import re as _re_local
-
         import httpx
 
         state = self._sm.decrypt_session()  # raises SessionError if missing/corrupt
@@ -217,10 +215,7 @@ class BlackboardUltraAdapter(LMSAdapter):
                     # the accurate content-creation timestamp.
                     if not title or title.lower().startswith("added:"):
                         continue
-                    body_html = ann.get("body", "")
-                    # Strip HTML tags for plain-text body storage
-                    body = _re_local.sub(r"<[^>]+>", " ", body_html).strip()
-                    body = _re_local.sub(r"\s+", " ", body)
+                    body = html_to_text(ann.get("body", ""))
 
                     created_str = ann.get("created") or ann.get("modified") or ""
                     try:

@@ -9,6 +9,7 @@ the main chat engine does all reasoning from the returned data.
 from __future__ import annotations
 
 from bb.tools.queries import (
+    NO_MATCH,
     get_course_content,
     get_grades,
     get_upcoming_deadlines,
@@ -41,7 +42,7 @@ def summarize_content(course: str, filename: str, offset: int = 0) -> dict:
         On failure: {error: "file not found"} or {error: "unsupported file type: <ext>"}
                     (PDF, DOCX, PPTX, TXT, MD are supported) or {error: "unreadable: <reason>"}
     """
-    course = resolve_course(course) or course  # raises on an ambiguous course
+    course = resolve_course(course) or NO_MATCH  # raises on an ambiguous course
     return read_file_content(course=course, filename=filename, offset=offset)
 
 
@@ -63,7 +64,7 @@ def generate_study_plan(course: str, exam_type: str | None = None) -> dict:
         {course, exam_type, grades, upcoming_deadlines, available_files, content_tree}
     """
     # Once, outside the per-source try/excepts, so an ambiguous course is reported.
-    course = resolve_course(course) or course.upper()
+    course = resolve_course(course) or NO_MATCH
     try:
         grades = get_grades(course=course)
     except Exception:
@@ -110,7 +111,7 @@ def extract_key_concepts(course: str) -> dict:
         {course, downloaded_files: list[dict], content_items: list[{title, type, url}]}
     """
     # Once, outside the per-source try/excepts, so an ambiguous course is reported.
-    course = resolve_course(course) or course.upper()
+    course = resolve_course(course) or NO_MATCH
     try:
         downloaded_files = list_downloaded_files(course=course)
     except Exception:
@@ -168,7 +169,7 @@ def estimate_study_time(course: str, target_grade: str | None = None) -> dict:
         {course, target_grade, current_grades, remaining_deadlines, downloaded_files}
     """
     # Once, outside the per-source try/excepts, so an ambiguous course is reported.
-    course = resolve_course(course) or course.upper()
+    course = resolve_course(course) or NO_MATCH
     try:
         current_grades = get_grades(course=course)
     except Exception:
