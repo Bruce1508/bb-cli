@@ -21,11 +21,8 @@ def notify(topic: str, title: str, body: str, priority: str = "default") -> None
     try:
         httpx.post(
             f"{NTFY_BASE_URL}/{topic}",
+            params={"title": title, "priority": priority},  # headers are ASCII-only
             content=body.encode(),
-            headers={
-                "Title": title,
-                "Priority": priority,
-            },
             timeout=10,
         )
     except Exception:
